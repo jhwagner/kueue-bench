@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/jhwagner/kueue-bench/pkg/cluster"
 	"github.com/jhwagner/kueue-bench/pkg/config"
 	"github.com/spf13/cobra"
 )
@@ -71,9 +72,16 @@ func runTopologyCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("topology validation failed: %w", err)
 	}
 
-	fmt.Printf("✓ Topology loaded and validated\n")
+	fmt.Printf("✓ Topology loaded and validated\n\n")
 
-	// TODO: Create kind cluster(s), install Kwok, install Kueue, apply objects
+	// Create kind cluster(s)
+	for _, clusterCfg := range topology.Spec.Clusters {
+		if err := cluster.CreateCluster(cmd.Context(), &clusterCfg); err != nil {
+			return fmt.Errorf("failed to create cluster '%s': %w", clusterCfg.Name, err)
+		}
+	}
+
+	// TODO: Install Kwok, install Kueue, apply objects
 
 	return nil
 }
