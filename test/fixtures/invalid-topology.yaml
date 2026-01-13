@@ -1,0 +1,13 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: invalid-test
+spec:
+  clusters:
+    - name: test-cluster
+      role: management  # Only standalone clusters supported currently
+      nodePools:
+        - name: pool
+          count: 1
+          resources:
+            cpu: "1"

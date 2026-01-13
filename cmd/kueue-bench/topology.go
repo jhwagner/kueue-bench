@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/jhwagner/kueue-bench/pkg/config"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,21 @@ func init() {
 func runTopologyCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	fmt.Printf("Creating topology '%s' from file '%s'...\n", name, topologyFile)
-	fmt.Println("Not implemented yet")
+
+	// Load and validate topology configuration
+	topology, err := config.LoadTopology(topologyFile)
+	if err != nil {
+		return fmt.Errorf("failed to load topology: %w", err)
+	}
+
+	if err := config.ValidateTopology(topology); err != nil {
+		return fmt.Errorf("topology validation failed: %w", err)
+	}
+
+	fmt.Printf("✓ Topology loaded and validated\n")
+
+	// TODO: Create kind cluster(s), install Kwok, install Kueue, apply objects
+
 	return nil
 }
 

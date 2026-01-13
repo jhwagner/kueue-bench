@@ -1,0 +1,46 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: simple-test
+spec:
+  defaults:
+    kueue:
+      version: "v0.15.2"
+    kwok:
+      version: "v0.7.0"
+
+  clusters:
+    - name: test-cluster
+      role: standalone
+
+      nodePools:
+        - name: cpu-pool
+          count: 10
+          resources:
+            cpu: "32"
+            memory: "128Gi"
+          labels:
+            node-type: cpu
+
+      kueue:
+        resourceFlavors:
+          - name: default-flavor
+            nodeLabels:
+              node-type: cpu
+
+        clusterQueues:
+          - name: main-queue
+            resourceGroups:
+              - coveredResources: ["cpu", "memory"]
+                flavors:
+                  - name: default-flavor
+                    resources:
+                      - name: cpu
+                        nominalQuota: "320"
+                      - name: memory
+                        nominalQuota: "1280Gi"
+
+        localQueues:
+          - name: user-queue
+            namespace: default
+            clusterQueue: main-queue
