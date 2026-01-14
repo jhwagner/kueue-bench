@@ -5,6 +5,7 @@ import (
 
 	"github.com/jhwagner/kueue-bench/pkg/cluster"
 	"github.com/jhwagner/kueue-bench/pkg/config"
+	"github.com/jhwagner/kueue-bench/pkg/kwok"
 	"github.com/spf13/cobra"
 )
 
@@ -72,16 +73,38 @@ func runTopologyCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("topology validation failed: %w", err)
 	}
 
-	fmt.Printf("✓ Topology loaded and validated\n\n")
+	fmt.Println("✓ Topology loaded and validated")
 
 	// Create kind cluster(s)
 	for _, clusterCfg := range topology.Spec.Clusters {
 		if err := cluster.CreateCluster(cmd.Context(), &clusterCfg); err != nil {
 			return fmt.Errorf("failed to create cluster '%s': %w", clusterCfg.Name, err)
 		}
+
+		// Get kubeconfig path for this cluster
+		kubeconfigPath, err := cluster.GetKubeconfigPath(clusterCfg.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get kubeconfig for cluster '%s': %w", clusterCfg.Name, err)
+		}
+
+		// Get Kwok version
+		kwokVersion := kwok.DefaultKwokVersion
+		if topology.Spec.Defaults != nil && topology.Spec.Defaults.Kwok != nil && topology.Spec.Defaults.Kwok.Version != "" {
+			kwokVersion = topology.Spec.Defaults.Kwok.Version
+		}
+
+		// Install Kwok
+		if err := kwok.Install(cmd.Context(), kubeconfigPath, kwokVersion); err != nil {
+			return fmt.Errorf("failed to install Kwok in cluster '%s': %w", clusterCfg.Name, err)
+		}
+
+		// Create Kwok nodes
+		if err := kwok.CreateNodes(cmd.Context(), kubeconfigPath, clusterCfg.NodePools); err != nil {
+			return fmt.Errorf("failed to create nodes in cluster '%s': %w", clusterCfg.Name, err)
+		}
 	}
 
-	// TODO: Install Kwok, install Kueue, apply objects
+	// TODO: Install Kueue, apply Kueue objects
 
 	return nil
 }
