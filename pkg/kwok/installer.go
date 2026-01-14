@@ -66,6 +66,9 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 		return fmt.Errorf("failed to install Kwok controller: %w", err)
 	}
 
+	// Reset discovery cache so mapper can discover newly created Stage CRD
+	mapper.Reset()
+
 	// Apply Kwok stage manifest for pod lifecycle
 	stageURL := fmt.Sprintf(kwokStageManifestURLTemplate, version)
 	if err := applyManifestFromURL(ctx, dynamicClient, mapper, stageURL); err != nil {
