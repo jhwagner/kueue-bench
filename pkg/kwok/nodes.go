@@ -3,14 +3,21 @@ package kwok
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+)
+
+const (
+	// Maximum number of concurrent node creation goroutines
+	maxConcurrency = 100
 )
 
 // CreateNodes creates simulated Kwok nodes based on node pool configuration
@@ -20,6 +27,10 @@ func CreateNodes(ctx context.Context, kubeconfigPath string, nodePools []config.
 	if err != nil {
 		return fmt.Errorf("failed to load kubeconfig: %w", err)
 	}
+
+	// Increase rate limits for bulk node creation (local cluster with fake nodes)
+	cfg.QPS = 50    // requests per second
+	cfg.Burst = 100 // burst capacity
 
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -31,33 +42,54 @@ func CreateNodes(ctx context.Context, kubeconfigPath string, nodePools []config.
 		totalNodes += pool.Count
 	}
 
-	fmt.Printf("Creating %d simulated nodes...\n", totalNodes)
+	fmt.Printf("Creating %d simulated nodes (using %d parallel workers)...\n", totalNodes, maxConcurrency)
 
-	nodeIndex := 0
+	// Use errgroup for parallel node creation with bounded concurrency
+	g, ctx := errgroup.WithContext(ctx)
+	sem := make(chan struct{}, maxConcurrency)
+	var created atomic.Int32
+
 	for _, pool := range nodePools {
+		pool := pool // capture loop variable
 		for i := 0; i < pool.Count; i++ {
-			nodeName := fmt.Sprintf("kwok-node-%s-%03d", pool.Name, i)
-			node := generateNodeManifest(nodeName, &pool)
+			i := i // capture loop variable
 
-			// Create node
-			_, err := clientset.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
-			if err != nil {
-				if errors.IsAlreadyExists(err) {
-					// Update existing node
-					_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
-					if err != nil {
-						return fmt.Errorf("failed to update node %s: %w", nodeName, err)
+			g.Go(func() error {
+				// Acquire semaphore
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				nodeName := fmt.Sprintf("kwok-node-%s-%03d", pool.Name, i)
+				node := generateNodeManifest(nodeName, &pool)
+
+				// Create node
+				_, err := clientset.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
+				if err != nil {
+					if errors.IsAlreadyExists(err) {
+						// Update existing node
+						_, err = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+						if err != nil {
+							return fmt.Errorf("failed to update node %s: %w", nodeName, err)
+						}
+					} else {
+						return fmt.Errorf("failed to create node %s: %w", nodeName, err)
 					}
-				} else {
-					return fmt.Errorf("failed to create node %s: %w", nodeName, err)
 				}
-			}
 
-			nodeIndex++
-			if nodeIndex%10 == 0 {
-				fmt.Printf("  Created %d/%d nodes...\n", nodeIndex, totalNodes)
-			}
+				// Update progress counter
+				count := created.Add(1)
+				if count%10 == 0 {
+					fmt.Printf("  Created %d/%d nodes...\n", count, totalNodes)
+				}
+
+				return nil
+			})
 		}
+	}
+
+	// Wait for all goroutines to complete
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Created %d simulated nodes successfully\n", totalNodes)
