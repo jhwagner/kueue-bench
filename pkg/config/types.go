@@ -33,8 +33,9 @@ type Defaults struct {
 
 // KueueDefaults contains default Kueue settings
 type KueueDefaults struct {
-	Version string `yaml:"version,omitempty"`
-	Image   string `yaml:"image,omitempty"`
+	Version         string `yaml:"version,omitempty"`
+	ImageRepository string `yaml:"imageRepository,omitempty"`
+	ImageTag        string `yaml:"imageTag,omitempty"`
 }
 
 // KwokDefaults contains default Kwok settings

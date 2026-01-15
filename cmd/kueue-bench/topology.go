@@ -5,6 +5,7 @@ import (
 
 	"github.com/jhwagner/kueue-bench/pkg/cluster"
 	"github.com/jhwagner/kueue-bench/pkg/config"
+	"github.com/jhwagner/kueue-bench/pkg/kueue"
 	"github.com/jhwagner/kueue-bench/pkg/kwok"
 	"github.com/spf13/cobra"
 )
@@ -102,9 +103,26 @@ func runTopologyCreate(cmd *cobra.Command, args []string) error {
 		if err := kwok.CreateNodes(cmd.Context(), kubeconfigPath, clusterCfg.NodePools); err != nil {
 			return fmt.Errorf("failed to create nodes in cluster '%s': %w", clusterCfg.Name, err)
 		}
+
+		// Get Kueue version and image from defaults
+		kueueVersion := kueue.DefaultKueueVersion
+		kueueImageRepository := ""
+		kueueImageTag := ""
+		if topology.Spec.Defaults != nil && topology.Spec.Defaults.Kueue != nil {
+			if topology.Spec.Defaults.Kueue.Version != "" {
+				kueueVersion = topology.Spec.Defaults.Kueue.Version
+			}
+			kueueImageRepository = topology.Spec.Defaults.Kueue.ImageRepository
+			kueueImageTag = topology.Spec.Defaults.Kueue.ImageTag
+		}
+
+		// Install Kueue
+		if err := kueue.Install(cmd.Context(), kubeconfigPath, kueueVersion, kueueImageRepository, kueueImageTag); err != nil {
+			return fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterCfg.Name, err)
+		}
 	}
 
-	// TODO: Install Kueue, apply Kueue objects
+	// TODO: Apply Kueue objects
 
 	return nil
 }
