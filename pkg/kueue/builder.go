@@ -1,0 +1,154 @@
+package kueue
+
+import (
+	"github.com/jhwagner/kueue-bench/pkg/config"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+)
+
+// BuildResourceFlavor builds a Kueue ResourceFlavor from a config ResourceFlavor
+func BuildResourceFlavor(rf config.ResourceFlavor) *kueue.ResourceFlavor {
+	return &kueue.ResourceFlavor{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "ResourceFlavor"},
+		ObjectMeta: metav1.ObjectMeta{Name: rf.Name},
+		Spec: kueue.ResourceFlavorSpec{
+			NodeLabels:  rf.NodeLabels,
+			Tolerations: rf.Tolerations,
+		},
+	}
+}
+
+// BuildClusterQueue builds a Kueue ClusterQueue from a config ClusterQueue
+func BuildClusterQueue(cq config.ClusterQueue) *kueue.ClusterQueue {
+	kueueCQ := &kueue.ClusterQueue{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "ClusterQueue"},
+		ObjectMeta: metav1.ObjectMeta{Name: cq.Name},
+		Spec: kueue.ClusterQueueSpec{
+			Cohort:         kueue.CohortReference(cq.Cohort),
+			ResourceGroups: buildResourceGroups(cq.ResourceGroups),
+		},
+	}
+
+	// Build preemption config if present
+	if cq.Preemption != nil {
+		kueueCQ.Spec.Preemption = buildPreemptionConfig(cq.Preemption)
+	}
+
+	return kueueCQ
+}
+
+// buildPreemptionConfig builds ClusterQueuePreemption from config
+func buildPreemptionConfig(pc *config.PreemptionConfig) *kueue.ClusterQueuePreemption {
+	preemption := &kueue.ClusterQueuePreemption{}
+
+	// Build WithinClusterQueue
+	if pc.WithinClusterQueue != "" {
+		preemption.WithinClusterQueue = kueue.PreemptionPolicy(pc.WithinClusterQueue)
+	}
+
+	// Build ReclaimWithinCohort
+	if pc.ReclaimWithinCohort != "" {
+		preemption.ReclaimWithinCohort = kueue.PreemptionPolicy(pc.ReclaimWithinCohort)
+	}
+
+	// Build BorrowWithinCohort
+	if pc.BorrowWithinCohort != nil {
+		borrowing := &kueue.BorrowWithinCohort{}
+		if pc.BorrowWithinCohort.Policy != "" {
+			borrowing.Policy = kueue.BorrowWithinCohortPolicy(pc.BorrowWithinCohort.Policy)
+		}
+		if pc.BorrowWithinCohort.MaxPriorityThreshold != nil {
+			borrowing.MaxPriorityThreshold = pc.BorrowWithinCohort.MaxPriorityThreshold
+		}
+		preemption.BorrowWithinCohort = borrowing
+	}
+
+	return preemption
+}
+
+// buildResourceGroups builds ResourceGroups from config
+func buildResourceGroups(groups []config.ResourceGroup) []kueue.ResourceGroup {
+	result := make([]kueue.ResourceGroup, len(groups))
+	for i, group := range groups {
+		result[i] = kueue.ResourceGroup{
+			CoveredResources: buildCoveredResources(group.CoveredResources),
+			Flavors:          buildFlavors(group.Flavors),
+		}
+	}
+	return result
+}
+
+// buildCoveredResources builds ResourceName slice from covered resources
+func buildCoveredResources(resources []string) []corev1.ResourceName {
+	result := make([]corev1.ResourceName, len(resources))
+	for i, r := range resources {
+		result[i] = corev1.ResourceName(r)
+	}
+	return result
+}
+
+// buildFlavors builds flavor quotas
+func buildFlavors(flavors []config.FlavorQuotas) []kueue.FlavorQuotas {
+	result := make([]kueue.FlavorQuotas, len(flavors))
+	for i, flavor := range flavors {
+		result[i] = kueue.FlavorQuotas{
+			Name:      kueue.ResourceFlavorReference(flavor.Name),
+			Resources: buildResources(flavor.Resources),
+		}
+	}
+	return result
+}
+
+// buildResources builds resource quotas
+func buildResources(resources []config.Resource) []kueue.ResourceQuota {
+	result := make([]kueue.ResourceQuota, len(resources))
+	for i, res := range resources {
+		quota := kueue.ResourceQuota{
+			Name:         corev1.ResourceName(res.Name),
+			NominalQuota: resource.MustParse(res.NominalQuota),
+		}
+
+		// Build optional borrowing limit
+		if res.BorrowingLimit != "" {
+			borrowingLimit := resource.MustParse(res.BorrowingLimit)
+			quota.BorrowingLimit = &borrowingLimit
+		}
+
+		// Build optional lending limit
+		if res.LendingLimit != "" {
+			lendingLimit := resource.MustParse(res.LendingLimit)
+			quota.LendingLimit = &lendingLimit
+		}
+
+		result[i] = quota
+	}
+	return result
+}
+
+// BuildLocalQueue builds a Kueue LocalQueue from a config LocalQueue
+func BuildLocalQueue(lq config.LocalQueue) *kueue.LocalQueue {
+	namespace := lq.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	return &kueue.LocalQueue{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "LocalQueue"},
+		ObjectMeta: metav1.ObjectMeta{Name: lq.Name, Namespace: namespace},
+		Spec: kueue.LocalQueueSpec{
+			ClusterQueue: kueue.ClusterQueueReference(lq.ClusterQueue),
+		},
+	}
+}
+
+// BuildWorkloadPriorityClass builds a Kueue WorkloadPriorityClass from a config WorkloadPriorityClass
+func BuildWorkloadPriorityClass(wpc config.WorkloadPriorityClass) *kueue.WorkloadPriorityClass {
+	return &kueue.WorkloadPriorityClass{
+		TypeMeta:    metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "WorkloadPriorityClass"},
+		ObjectMeta:  metav1.ObjectMeta{Name: wpc.Name},
+		Value:       wpc.Value,
+		Description: wpc.Description,
+	}
+}

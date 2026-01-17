@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	kueuev1beta1 "sigs.k8s.io/kueue/apis/kueue/v1beta1"
-	kueueclientset "sigs.k8s.io/kueue/client-go/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	kueueclientset "sigs.k8s.io/kueue/client-go/clientset/versioned"
 )
 
 // Client wraps Kubernetes clients for Kueue object operations
@@ -45,7 +45,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 }
 
 // CreateResourceFlavor creates or updates a ResourceFlavor
-func (c *Client) CreateResourceFlavor(ctx context.Context, rf *kueuev1beta1.ResourceFlavor) error {
+func (c *Client) CreateResourceFlavor(ctx context.Context, rf *kueue.ResourceFlavor) error {
 	_, err := c.kueueClient.KueueV1beta1().ResourceFlavors().Create(ctx, rf, metav1.CreateOptions{})
 	if err != nil {
 		// If create failed, try to update
@@ -66,7 +66,7 @@ func (c *Client) CreateResourceFlavor(ctx context.Context, rf *kueuev1beta1.Reso
 }
 
 // CreateClusterQueue creates or updates a ClusterQueue
-func (c *Client) CreateClusterQueue(ctx context.Context, cq *kueuev1beta1.ClusterQueue) error {
+func (c *Client) CreateClusterQueue(ctx context.Context, cq *kueue.ClusterQueue) error {
 	_, err := c.kueueClient.KueueV1beta1().ClusterQueues().Create(ctx, cq, metav1.CreateOptions{})
 	if err != nil {
 		// If create failed, try to update
@@ -87,7 +87,7 @@ func (c *Client) CreateClusterQueue(ctx context.Context, cq *kueuev1beta1.Cluste
 }
 
 // CreateLocalQueue creates or updates a LocalQueue
-func (c *Client) CreateLocalQueue(ctx context.Context, lq *kueuev1beta1.LocalQueue) error {
+func (c *Client) CreateLocalQueue(ctx context.Context, lq *kueue.LocalQueue) error {
 	namespace := lq.Namespace
 	if namespace == "" {
 		namespace = "default"
@@ -113,7 +113,7 @@ func (c *Client) CreateLocalQueue(ctx context.Context, lq *kueuev1beta1.LocalQue
 }
 
 // CreateWorkloadPriorityClass creates or updates a WorkloadPriorityClass
-func (c *Client) CreateWorkloadPriorityClass(ctx context.Context, wpc *kueuev1beta1.WorkloadPriorityClass) error {
+func (c *Client) CreateWorkloadPriorityClass(ctx context.Context, wpc *kueue.WorkloadPriorityClass) error {
 	_, err := c.kueueClient.KueueV1beta1().WorkloadPriorityClasses().Create(ctx, wpc, metav1.CreateOptions{})
 	if err != nil {
 		// If create failed, try to update
