@@ -5,7 +5,7 @@ metadata:
 spec:
   defaults:
     kueue:
-      version: "v0.15.2"
+      version: "0.15.2"
     kwok:
       version: "v0.7.0"
 

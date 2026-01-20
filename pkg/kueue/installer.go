@@ -20,12 +20,10 @@ import (
 
 const (
 	// DefaultKueueVersion is the default Kueue version to install
-	DefaultKueueVersion = "v0.15.2"
+	DefaultKueueVersion = "0.15.2"
 
-	// Kueue Helm repository configuration
-	kueueHelmRepoName = "kueue"
-	kueueHelmRepoURL  = "https://kubernetes-sigs.github.io/kueue"
-	kueueHelmChart    = "kueue/kueue"
+	// Kueue Helm OCI registry configuration
+	kueueHelmRegistryURL = "oci://registry.k8s.io/kueue/charts/kueue"
 
 	// Kueue deployment details
 	kueueNamespace   = "kueue-system"
@@ -44,16 +42,6 @@ func Install(ctx context.Context, kubeconfigPath string, version string, imageRe
 	// Check if helm is installed
 	if err := checkHelmInstalled(); err != nil {
 		return err
-	}
-
-	// Add Kueue Helm repository
-	if err := addHelmRepo(ctx); err != nil {
-		return fmt.Errorf("failed to add Helm repository: %w", err)
-	}
-
-	// Update Helm repositories
-	if err := updateHelmRepos(ctx); err != nil {
-		return fmt.Errorf("failed to update Helm repositories: %w", err)
 	}
 
 	// Install Kueue via Helm
@@ -80,47 +68,10 @@ func checkHelmInstalled() error {
 	return nil
 }
 
-// addHelmRepo adds the Kueue Helm repository
-func addHelmRepo(ctx context.Context) error {
-	fmt.Printf("Adding Helm repository '%s'...\n", kueueHelmRepoName)
-	cmd := exec.CommandContext(ctx, "helm", "repo", "add", kueueHelmRepoName, kueueHelmRepoURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		// Ignore error if repo already exists
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() != 0 {
-				// Check if it's just "already exists" error (non-fatal)
-				return nil
-			}
-		}
-		return fmt.Errorf("failed to add Helm repository: %w", err)
-	}
-
-	return nil
-}
-
-// updateHelmRepos updates all Helm repositories
-func updateHelmRepos(ctx context.Context) error {
-	fmt.Println("Updating Helm repositories...")
-	cmd := exec.CommandContext(ctx, "helm", "repo", "update")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to update Helm repositories: %w", err)
-	}
-
-	return nil
-}
-
 // installKueueChart installs the Kueue Helm chart
 func installKueueChart(ctx context.Context, kubeconfigPath string, version string, imageRepository string, imageTag string) error {
-	fmt.Printf("Installing Kueue chart (version: %s)...\n", version)
-
 	args := []string{
-		"install", kueueReleaseName, kueueHelmChart,
+		"install", kueueReleaseName, kueueHelmRegistryURL,
 		"--version", version,
 		"--namespace", kueueNamespace,
 		"--create-namespace",
@@ -129,6 +80,7 @@ func installKueueChart(ctx context.Context, kubeconfigPath string, version strin
 		"--timeout", "5m",
 	}
 
+	fmt.Println("executing command:", args)
 	// Add custom image repository if specified
 	if imageRepository != "" {
 		args = append(args, "--set", fmt.Sprintf("controllerManager.manager.image.repository=%s", imageRepository))
