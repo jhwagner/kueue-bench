@@ -22,8 +22,6 @@ func CreateNodes(ctx context.Context, kubeconfigPath string, nodePools []config.
 	}
 
 	for _, pool := range nodePools {
-		pool := pool // capture loop variable
-
 		// Build template parameters
 		params := buildTemplateParameters(&pool)
 
