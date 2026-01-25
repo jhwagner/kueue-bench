@@ -3,10 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/jhwagner/kueue-bench/pkg/cluster"
 	"github.com/jhwagner/kueue-bench/pkg/config"
-	"github.com/jhwagner/kueue-bench/pkg/kueue"
-	"github.com/jhwagner/kueue-bench/pkg/kwok"
+	"github.com/jhwagner/kueue-bench/pkg/topology"
 	"github.com/spf13/cobra"
 )
 
@@ -65,77 +63,65 @@ func runTopologyCreate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Creating topology '%s' from file '%s'...\n", name, topologyFile)
 
 	// Load and validate topology configuration
-	topology, err := config.LoadTopology(topologyFile)
+	cfg, err := config.LoadTopology(topologyFile)
 	if err != nil {
 		return fmt.Errorf("failed to load topology: %w", err)
 	}
 
-	if err := config.ValidateTopology(topology); err != nil {
+	if err := config.ValidateTopology(cfg); err != nil {
 		return fmt.Errorf("topology validation failed: %w", err)
 	}
 
 	fmt.Println("✓ Topology loaded and validated")
 
-	// Create kind cluster(s)
-	for _, clusterCfg := range topology.Spec.Clusters {
-		if err := cluster.CreateCluster(cmd.Context(), &clusterCfg); err != nil {
-			return fmt.Errorf("failed to create cluster '%s': %w", clusterCfg.Name, err)
-		}
-
-		// Get kubeconfig path for this cluster
-		kubeconfigPath, err := cluster.GetKubeconfigPath(clusterCfg.Name)
-		if err != nil {
-			return fmt.Errorf("failed to get kubeconfig for cluster '%s': %w", clusterCfg.Name, err)
-		}
-
-		// Get Kwok version
-		kwokVersion := kwok.DefaultKwokVersion
-		if topology.Spec.Defaults != nil && topology.Spec.Defaults.Kwok != nil && topology.Spec.Defaults.Kwok.Version != "" {
-			kwokVersion = topology.Spec.Defaults.Kwok.Version
-		}
-
-		// Install Kwok
-		if err := kwok.Install(cmd.Context(), kubeconfigPath, kwokVersion); err != nil {
-			return fmt.Errorf("failed to install Kwok in cluster '%s': %w", clusterCfg.Name, err)
-		}
-
-		// Create Kwok nodes
-		if err := kwok.CreateNodes(cmd.Context(), kubeconfigPath, clusterCfg.NodePools); err != nil {
-			return fmt.Errorf("failed to create nodes in cluster '%s': %w", clusterCfg.Name, err)
-		}
-
-		// Get Kueue version and image from defaults
-		kueueVersion := kueue.DefaultKueueVersion
-		kueueImageRepository := ""
-		kueueImageTag := ""
-		if topology.Spec.Defaults != nil && topology.Spec.Defaults.Kueue != nil {
-			if topology.Spec.Defaults.Kueue.Version != "" {
-				kueueVersion = topology.Spec.Defaults.Kueue.Version
-			}
-			kueueImageRepository = topology.Spec.Defaults.Kueue.ImageRepository
-			kueueImageTag = topology.Spec.Defaults.Kueue.ImageTag
-		}
-
-		// Install Kueue
-		if err := kueue.Install(cmd.Context(), kubeconfigPath, kueueVersion, kueueImageRepository, kueueImageTag); err != nil {
-			return fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterCfg.Name, err)
-		}
+	// Create topology (creates clusters, installs components, saves metadata)
+	if _, err := topology.Create(cmd.Context(), name, cfg); err != nil {
+		return fmt.Errorf("failed to create topology: %w", err)
 	}
 
-	// TODO: Apply Kueue objects
-
+	fmt.Printf("✓ Topology '%s' created successfully\n", name)
 	return nil
 }
 
 func runTopologyDelete(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	fmt.Printf("Deleting topology '%s'...\n", name)
-	fmt.Println("Not implemented yet")
+
+	// Load topology metadata
+	topo, err := topology.Load(name)
+	if err != nil {
+		return fmt.Errorf("failed to load topology: %w", err)
+	}
+
+	// Delete topology (deletes clusters and metadata)
+	if err := topo.Delete(cmd.Context()); err != nil {
+		return fmt.Errorf("failed to delete topology: %w", err)
+	}
+
+	fmt.Printf("✓ Topology '%s' deleted successfully\n", name)
 	return nil
 }
 
 func runTopologyList(cmd *cobra.Command, args []string) error {
-	fmt.Println("Listing topologies...")
-	fmt.Println("Not implemented yet")
+	topologies, err := topology.List()
+	if err != nil {
+		return fmt.Errorf("failed to list topologies: %w", err)
+	}
+
+	if len(topologies) == 0 {
+		fmt.Println("No topologies found")
+		return nil
+	}
+
+	fmt.Printf("%-20s %-10s %-20s\n", "NAME", "CLUSTERS", "CREATED")
+	fmt.Println("------------------------------------------------------------")
+	for _, topo := range topologies {
+		metadata := topo.GetMetadata()
+		fmt.Printf("%-20s %-10d %-20s\n",
+			metadata.Name,
+			len(metadata.Clusters),
+			metadata.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+
 	return nil
 }
