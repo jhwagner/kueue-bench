@@ -25,7 +25,7 @@ func CreateNodes(ctx context.Context, kubeconfigPath string, nodePools []config.
 		// Build template parameters
 		params := buildTemplateParameters(&pool)
 
-		fmt.Printf("Creating %d nodes in pool %s...\n", pool.Name, pool.Count)
+		fmt.Printf("Creating %d nodes in pool %s...\n", pool.Count, pool.Name)
 
 		err := scale.Scale(ctx, clientset, scale.Config{
 			Template:     nodeTemplate,
