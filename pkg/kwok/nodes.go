@@ -57,8 +57,18 @@ func buildTemplateParameters(pool *config.NodePool) map[string]interface{} {
 		params["Taints"] = pool.Taints
 	}
 
-	// Add resources
-	params["Resources"] = pool.Resources
+	// Add resources with default pods capacity
+	resources := make(map[string]string)
+	for k, v := range pool.Resources {
+		resources[k] = v
+	}
+
+	// Add default pods capacity if not specified
+	if _, exists := resources["pods"]; !exists {
+		resources["pods"] = "110" // Standard Kubernetes default
+	}
+
+	params["Resources"] = resources
 
 	return params
 }
