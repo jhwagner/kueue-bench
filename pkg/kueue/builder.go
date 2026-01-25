@@ -31,6 +31,13 @@ func BuildClusterQueue(cq config.ClusterQueue) *kueue.ClusterQueue {
 		},
 	}
 
+	// Build namespace selector if present (empty {} means all namespaces)
+	if cq.NamespaceSelector != nil {
+		kueueCQ.Spec.NamespaceSelector = &metav1.LabelSelector{
+			MatchLabels: cq.NamespaceSelector.MatchLabels,
+		}
+	}
+
 	// Build preemption config if present
 	if cq.Preemption != nil {
 		kueueCQ.Spec.Preemption = buildPreemptionConfig(cq.Preemption)

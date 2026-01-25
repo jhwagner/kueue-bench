@@ -85,10 +85,16 @@ type ResourceFlavor struct {
 
 // ClusterQueue represents a Kueue ClusterQueue
 type ClusterQueue struct {
-	Name           string            `yaml:"name"`
-	Cohort         string            `yaml:"cohort,omitempty"`
-	Preemption     *PreemptionConfig `yaml:"preemption,omitempty"`
-	ResourceGroups []ResourceGroup   `yaml:"resourceGroups"`
+	Name              string            `yaml:"name"`
+	Cohort            string            `yaml:"cohort,omitempty"`
+	NamespaceSelector *LabelSelector    `yaml:"namespaceSelector,omitempty"`
+	Preemption        *PreemptionConfig `yaml:"preemption,omitempty"`
+	ResourceGroups    []ResourceGroup   `yaml:"resourceGroups"`
+}
+
+// LabelSelector is a simplified label selector (supports matchLabels only for v1alpha1)
+type LabelSelector struct {
+	MatchLabels map[string]string `yaml:"matchLabels,omitempty"`
 }
 
 // PreemptionConfig defines preemption policies

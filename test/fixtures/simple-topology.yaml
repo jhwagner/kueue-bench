@@ -30,6 +30,7 @@ spec:
 
         clusterQueues:
           - name: main-queue
+            namespaceSelector: {}  # Match all namespaces
             resourceGroups:
               - coveredResources: ["cpu", "memory"]
                 flavors:
