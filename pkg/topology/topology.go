@@ -90,6 +90,18 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (*Topology, 
 			return nil, fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterName, err)
 		}
 
+		// Provision Kueue objects (if specified)
+		if clusterCfg.Kueue != nil {
+			kueueClient, err := kueue.NewClient(kubeconfigPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Kueue client for cluster '%s': %w", clusterName, err)
+			}
+
+			if err := kueue.ProvisionKueueObjects(ctx, kueueClient, clusterCfg.Kueue); err != nil {
+				return nil, fmt.Errorf("failed to provision Kueue objects in cluster '%s': %w", clusterName, err)
+			}
+		}
+
 		// Add cluster to metadata
 		t.metadata.Clusters[clusterName] = Cluster{
 			Name:            clusterName,
