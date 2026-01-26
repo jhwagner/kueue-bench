@@ -46,22 +46,22 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (*Topology, 
 		return nil, fmt.Errorf("failed to create topology directory: %w", err)
 	}
 
-	// Get Kwok version from defaults
+	// Get Kwok version from spec
 	kwokVersion := kwok.DefaultKwokVersion
-	if cfg.Spec.Defaults != nil && cfg.Spec.Defaults.Kwok != nil && cfg.Spec.Defaults.Kwok.Version != "" {
-		kwokVersion = cfg.Spec.Defaults.Kwok.Version
+	if cfg.Spec.Kwok != nil && cfg.Spec.Kwok.Version != "" {
+		kwokVersion = cfg.Spec.Kwok.Version
 	}
 
-	// Get Kueue version and image from defaults
+	// Get Kueue version and image from spec
 	kueueVersion := kueue.DefaultKueueVersion
 	kueueImageRepository := ""
 	kueueImageTag := ""
-	if cfg.Spec.Defaults != nil && cfg.Spec.Defaults.Kueue != nil {
-		if cfg.Spec.Defaults.Kueue.Version != "" {
-			kueueVersion = cfg.Spec.Defaults.Kueue.Version
+	if cfg.Spec.Kueue != nil {
+		if cfg.Spec.Kueue.Version != "" {
+			kueueVersion = cfg.Spec.Kueue.Version
 		}
-		kueueImageRepository = cfg.Spec.Defaults.Kueue.ImageRepository
-		kueueImageTag = cfg.Spec.Defaults.Kueue.ImageTag
+		kueueImageRepository = cfg.Spec.Kueue.ImageRepository
+		kueueImageTag = cfg.Spec.Kueue.ImageTag
 	}
 
 	// Create each cluster with all components

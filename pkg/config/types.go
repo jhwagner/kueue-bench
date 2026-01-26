@@ -21,25 +21,20 @@ type Metadata struct {
 
 // TopologySpec defines the desired topology configuration
 type TopologySpec struct {
-	Defaults *Defaults       `yaml:"defaults,omitempty"`
+	Kueue    *KueueSettings  `yaml:"kueue,omitempty"`
+	Kwok     *KwokSettings   `yaml:"kwok,omitempty"`
 	Clusters []ClusterConfig `yaml:"clusters"`
 }
 
-// Defaults contains default versions and settings
-type Defaults struct {
-	Kueue *KueueDefaults `yaml:"kueue,omitempty"`
-	Kwok  *KwokDefaults  `yaml:"kwok,omitempty"`
-}
-
-// KueueDefaults contains default Kueue settings
-type KueueDefaults struct {
+// KueueSettings contains Kueue version and image settings
+type KueueSettings struct {
 	Version         string `yaml:"version,omitempty"`
 	ImageRepository string `yaml:"imageRepository,omitempty"`
 	ImageTag        string `yaml:"imageTag,omitempty"`
 }
 
-// KwokDefaults contains default Kwok settings
-type KwokDefaults struct {
+// KwokSettings contains Kwok version settings
+type KwokSettings struct {
 	Version string `yaml:"version,omitempty"`
 }
 
