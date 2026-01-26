@@ -20,7 +20,7 @@ spec:
 {{- range .Taints }}
   # User specified taints
   - key: {{ .Key }}
-    value: {{ .Value }}
+    value: {{ .Value | quote }}
     effect: {{ .Effect }}
 {{- end }}
 status:
