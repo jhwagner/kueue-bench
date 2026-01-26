@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"text/tabwriter"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
 	"github.com/jhwagner/kueue-bench/pkg/topology"
@@ -113,15 +115,18 @@ func runTopologyList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%-20s %-10s %-20s\n", "NAME", "CLUSTERS", "CREATED")
-	fmt.Println("------------------------------------------------------------")
+	// Use tabwriter for aligned output
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tCLUSTERS\tCREATED")
+	fmt.Fprintln(w, "----\t--------\t-------")
 	for _, topo := range topologies {
 		metadata := topo.GetMetadata()
-		fmt.Printf("%-20s %-10d %-20s\n",
+		fmt.Fprintf(w, "%s\t%d\t%s\n",
 			metadata.Name,
 			len(metadata.Clusters),
 			metadata.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
+	w.Flush()
 
 	return nil
 }
