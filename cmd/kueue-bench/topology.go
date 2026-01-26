@@ -21,12 +21,16 @@ var topologyCreateCmd = &cobra.Command{
 	Short: "Create a new topology",
 	Long: `Create a new Kueue test topology from a configuration file.
 
+The topology name can be specified either:
+  - As a positional argument (overrides config)
+  - In the metadata.name field of the config file
+
 This will:
   1. Create kind cluster(s)
   2. Install KWOK for node simulation
   3. Install Kueue
   4. Apply Kueue configuration objects`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runTopologyCreate,
 }
 
@@ -61,14 +65,26 @@ func init() {
 }
 
 func runTopologyCreate(cmd *cobra.Command, args []string) error {
-	name := args[0]
-	fmt.Printf("Creating topology '%s' from file '%s'...\n", name, topologyFile)
-
 	// Load and validate topology configuration
 	cfg, err := config.LoadTopology(topologyFile)
 	if err != nil {
 		return fmt.Errorf("failed to load topology: %w", err)
 	}
+
+	// Determine name: CLI arg overrides config
+	var name string
+	if len(args) > 0 {
+		name = args[0] // CLI override
+	} else {
+		name = cfg.Metadata.Name // from config
+	}
+
+	// Validate we have a name
+	if name == "" {
+		return fmt.Errorf("topology name must be specified via argument or metadata.name in topology configuration file")
+	}
+
+	fmt.Printf("Creating topology '%s' from file '%s'...\n", name, topologyFile)
 
 	if err := config.ValidateTopology(cfg); err != nil {
 		return fmt.Errorf("topology validation failed: %w", err)
