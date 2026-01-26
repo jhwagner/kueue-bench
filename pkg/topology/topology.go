@@ -26,8 +26,8 @@ type Topology struct {
 }
 
 // Create creates a new topology with all its clusters and components
-func Create(ctx context.Context, name string, cfg *config.Topology) (*Topology, error) {
-	t := &Topology{
+func Create(ctx context.Context, name string, cfg *config.Topology) (t *Topology, err error) {
+	t = &Topology{
 		metadata: &Metadata{
 			Name:      name,
 			CreatedAt: time.Now(),
@@ -45,6 +45,27 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (*Topology, 
 	if err := os.MkdirAll(topologyDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create topology directory: %w", err)
 	}
+
+	// Track created clusters for cleanup on error
+	var createdClusters []string
+
+	// Cleanup on error
+	defer func() {
+		if err != nil {
+			if len(createdClusters) > 0 {
+				fmt.Fprintf(os.Stderr, "\nTopology creation failed, cleaning up %d cluster(s)...\n", len(createdClusters))
+				for _, kindClusterName := range createdClusters {
+					if err := cluster.DeleteCluster(ctx, kindClusterName); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to cleanup cluster %s: %v\n", kindClusterName, err)
+					}
+				}
+			}
+			// Remove topology directory
+			if err := os.RemoveAll(topologyDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to remove topology directory: %v\n", err)
+			}
+		}
+	}()
 
 	// Get Kwok version from spec
 	kwokVersion := kwok.DefaultKwokVersion
@@ -74,6 +95,8 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (*Topology, 
 		if err := cluster.CreateCluster(ctx, kindClusterName, &clusterCfg, kubeconfigPath); err != nil {
 			return nil, fmt.Errorf("failed to create cluster '%s': %w", clusterName, err)
 		}
+		// Track created cluster for cleanup on error
+		createdClusters = append(createdClusters, kindClusterName)
 
 		// Install Kwok
 		if err := kwok.Install(ctx, kubeconfigPath, kwokVersion); err != nil {
