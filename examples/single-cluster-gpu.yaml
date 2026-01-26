@@ -1,0 +1,82 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: single-cluster-gpu
+spec:
+  kueue:
+    version: "0.15.2"
+  kwok:
+    version: "v0.7.0"
+
+  clusters:
+    - name: test-cluster
+      role: standalone
+
+      nodePools:
+        - name: cpu-pool
+          count: 10
+          resources:
+            cpu: "16"
+            memory: "128Gi"
+          labels:
+            node-type: cpu
+
+        - name: gpu-pool
+          count: 4
+          resources:
+            cpu: "32"
+            memory: "256Gi"
+            nvidia.com/gpu: "4"
+          labels:
+            node-type: gpu
+            gpu-model: a100
+          taints:
+            - key: nvidia.com/gpu
+              value: "true"
+              effect: NoSchedule
+
+      kueue:
+        resourceFlavors:
+          - name: cpu-flavor
+            nodeLabels:
+              node-type: cpu
+
+          - name: gpu-flavor
+            nodeLabels:
+              node-type: gpu
+
+        clusterQueues:
+          - name: cpu-cq
+            namespaceSelector: {}
+            resourceGroups:
+              - coveredResources: ["cpu", "memory"]
+                flavors:
+                  - name: cpu-flavor
+                    resources:
+                      - name: cpu
+                        nominalQuota: "160"
+                      - name: memory
+                        nominalQuota: "1280Gi"
+
+          - name: gpu-cq
+            namespaceSelector: {}
+            resourceGroups:
+              - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+                flavors:
+                  - name: gpu-flavor
+                    resources:
+                      - name: cpu
+                        nominalQuota: "128"
+                      - name: memory
+                        nominalQuota: "1024Gi"
+                      - name: nvidia.com/gpu
+                        nominalQuota: "16"
+
+        localQueues:
+          - name: cpu-lq
+            namespace: default
+            clusterQueue: cpu-cq
+
+          - name: gpu-lq
+            namespace: default
+            clusterQueue: gpu-cq
