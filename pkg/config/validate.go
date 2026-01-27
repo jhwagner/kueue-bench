@@ -108,6 +108,17 @@ func validateNodePool(p *NodePool, clusterIndex, poolIndex int, clusterName stri
 }
 
 func validateKueueConfig(k *KueueConfig, clusterIndex int, clusterName string) error {
+	// Validate Cohorts
+	if err := validateCohorts(k.Cohorts, clusterIndex, clusterName); err != nil {
+		return err
+	}
+
+	// Build a map of cohort names for validation
+	cohortNames := make(map[string]bool)
+	for _, cohort := range k.Cohorts {
+		cohortNames[cohort.Name] = true
+	}
+
 	// Build a map of resource flavor names for validation
 	flavorNames := make(map[string]bool)
 	for _, rf := range k.ResourceFlavors {
@@ -124,6 +135,12 @@ func validateKueueConfig(k *KueueConfig, clusterIndex int, clusterName string) e
 			return fmt.Errorf("cluster[%d] (%s): clusterQueue[%d]: name is required", clusterIndex, clusterName, i)
 		}
 		clusterQueueNames[cq.Name] = true
+
+		// Validate that referenced cohort exists
+		if cq.Cohort != "" && !cohortNames[cq.Cohort] {
+			return fmt.Errorf("cluster[%d] (%s): clusterQueue[%d] (%s): unknown cohort '%s'",
+				clusterIndex, clusterName, i, cq.Name, cq.Cohort)
+		}
 
 		if len(cq.ResourceGroups) == 0 {
 			return fmt.Errorf("cluster[%d] (%s): clusterQueue[%d] (%s): at least one resourceGroup is required",
@@ -167,6 +184,41 @@ func validateKueueConfig(k *KueueConfig, clusterIndex int, clusterName string) e
 		if !clusterQueueNames[lq.ClusterQueue] {
 			return fmt.Errorf("cluster[%d] (%s): localQueue[%d] (%s): unknown clusterQueue '%s'",
 				clusterIndex, clusterName, i, lq.Name, lq.ClusterQueue)
+		}
+	}
+
+	return nil
+}
+
+// validateCohorts validates cohort configuration
+func validateCohorts(cohorts []Cohort, clusterIndex int, clusterName string) error {
+	if len(cohorts) == 0 {
+		return nil
+	}
+
+	// Build a map of cohort names
+	cohortNames := make(map[string]bool)
+	for i, cohort := range cohorts {
+		if cohort.Name == "" {
+			return fmt.Errorf("cluster[%d] (%s): cohort[%d]: name is required",
+				clusterIndex, clusterName, i)
+		}
+
+		if cohortNames[cohort.Name] {
+			return fmt.Errorf("cluster[%d] (%s): cohort[%d]: duplicate cohort name '%s'",
+				clusterIndex, clusterName, i, cohort.Name)
+		}
+
+		cohortNames[cohort.Name] = true
+	}
+
+	// Validate that parent cohorts exist
+	for i, cohort := range cohorts {
+		if cohort.ParentName != "" {
+			if !cohortNames[cohort.ParentName] {
+				return fmt.Errorf("cluster[%d] (%s): cohort[%d] (%s): unknown parent cohort '%s'",
+					clusterIndex, clusterName, i, cohort.Name, cohort.ParentName)
+			}
 		}
 	}
 

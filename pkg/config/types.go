@@ -65,10 +65,24 @@ type Taint struct {
 
 // KueueConfig defines Kueue objects for a cluster
 type KueueConfig struct {
+	Cohorts         []Cohort                `yaml:"cohorts,omitempty"`
 	ResourceFlavors []ResourceFlavor        `yaml:"resourceFlavors,omitempty"`
 	ClusterQueues   []ClusterQueue          `yaml:"clusterQueues,omitempty"`
 	LocalQueues     []LocalQueue            `yaml:"localQueues,omitempty"`
 	PriorityClasses []WorkloadPriorityClass `yaml:"priorityClasses,omitempty"`
+}
+
+// Cohort represents a Kueue Cohort for hierarchical cohorts
+type Cohort struct {
+	Name           string          `yaml:"name"`
+	ParentName     string          `yaml:"parentName,omitempty"`
+	ResourceGroups []ResourceGroup `yaml:"resourceGroups,omitempty"`
+	FairSharing    *FairSharing    `yaml:"fairSharing,omitempty"`
+}
+
+// FairSharing defines fair sharing configuration for cohorts and cluster queues
+type FairSharing struct {
+	Weight int32 `yaml:"weight,omitempty"`
 }
 
 // ResourceFlavor represents a Kueue ResourceFlavor
