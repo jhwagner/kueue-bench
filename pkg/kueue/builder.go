@@ -8,6 +8,41 @@ import (
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
 )
 
+// BuildCohort builds a Kueue Cohort from a config Cohort
+func BuildCohort(c config.Cohort) *kueue.Cohort {
+	spec := kueue.CohortSpec{}
+
+	// Set parent name if present
+	if c.ParentName != "" {
+		spec.ParentName = kueue.CohortReference(c.ParentName)
+	}
+
+	// Build resource groups if present
+	if len(c.ResourceGroups) > 0 {
+		spec.ResourceGroups = buildResourceGroups(c.ResourceGroups)
+	}
+
+	// Build fair sharing if present
+	if c.FairSharing != nil {
+		spec.FairSharing = buildFairSharing(c.FairSharing)
+	}
+
+	return &kueue.Cohort{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "Cohort"},
+		ObjectMeta: metav1.ObjectMeta{Name: c.Name},
+		Spec:       spec,
+	}
+}
+
+// buildFairSharing builds FairSharing from config
+func buildFairSharing(fs *config.FairSharing) *kueue.FairSharing {
+	// Convert int32 weight to resource.Quantity
+	weight := resource.NewQuantity(int64(fs.Weight), resource.DecimalSI)
+	return &kueue.FairSharing{
+		Weight: weight,
+	}
+}
+
 // BuildResourceFlavor builds a Kueue ResourceFlavor from a config ResourceFlavor
 func BuildResourceFlavor(rf config.ResourceFlavor) *kueue.ResourceFlavor {
 	return &kueue.ResourceFlavor{

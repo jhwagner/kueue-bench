@@ -44,6 +44,27 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	}, nil
 }
 
+// CreateCohort creates or updates a Cohort
+func (c *Client) CreateCohort(ctx context.Context, cohort *kueue.Cohort) error {
+	_, err := c.kueueClient.KueueV1beta1().Cohorts().Create(ctx, cohort, metav1.CreateOptions{})
+	if err != nil {
+		// If create failed, try to update
+		existing, getErr := c.kueueClient.KueueV1beta1().Cohorts().Get(ctx, cohort.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to create Cohort %s: %w", cohort.Name, err)
+		}
+
+		// Preserve resourceVersion for update
+		cohort.ResourceVersion = existing.ResourceVersion
+		_, err = c.kueueClient.KueueV1beta1().Cohorts().Update(ctx, cohort, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update Cohort %s: %w", cohort.Name, err)
+		}
+	}
+
+	return nil
+}
+
 // CreateResourceFlavor creates or updates a ResourceFlavor
 func (c *Client) CreateResourceFlavor(ctx context.Context, rf *kueue.ResourceFlavor) error {
 	_, err := c.kueueClient.KueueV1beta1().ResourceFlavors().Create(ctx, rf, metav1.CreateOptions{})

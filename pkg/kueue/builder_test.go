@@ -9,6 +9,129 @@ import (
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
 )
 
+func TestBuildCohort(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   config.Cohort
+		checkFn func(*testing.T, *kueue.Cohort)
+	}{
+		{
+			name: "simple root cohort",
+			input: config.Cohort{
+				Name: "platform",
+			},
+			checkFn: func(t *testing.T, cohort *kueue.Cohort) {
+				if cohort.Name != "platform" {
+					t.Errorf("expected name 'platform', got '%s'", cohort.Name)
+				}
+				if cohort.Spec.ParentName != "" {
+					t.Errorf("expected empty parent name, got '%s'", cohort.Spec.ParentName)
+				}
+			},
+		},
+		{
+			name: "cohort with parent",
+			input: config.Cohort{
+				Name:       "team-a",
+				ParentName: "platform",
+			},
+			checkFn: func(t *testing.T, cohort *kueue.Cohort) {
+				if cohort.Name != "team-a" {
+					t.Errorf("expected name 'team-a', got '%s'", cohort.Name)
+				}
+				if string(cohort.Spec.ParentName) != "platform" {
+					t.Errorf("expected parent name 'platform', got '%s'", cohort.Spec.ParentName)
+				}
+			},
+		},
+		{
+			name: "cohort with fair sharing",
+			input: config.Cohort{
+				Name:       "team-a",
+				ParentName: "platform",
+				FairSharing: &config.FairSharing{
+					Weight: 2,
+				},
+			},
+			checkFn: func(t *testing.T, cohort *kueue.Cohort) {
+				if cohort.Spec.FairSharing == nil {
+					t.Fatal("expected FairSharing to be set")
+				}
+				if cohort.Spec.FairSharing.Weight == nil {
+					t.Fatal("expected Weight to be set")
+				}
+				expectedWeight := resource.MustParse("2")
+				if cohort.Spec.FairSharing.Weight.Cmp(expectedWeight) != 0 {
+					t.Errorf("expected weight 2, got %v", cohort.Spec.FairSharing.Weight)
+				}
+			},
+		},
+		{
+			name: "cohort with zero weight deprioritizes cohort",
+			input: config.Cohort{
+				Name:       "low-priority",
+				ParentName: "platform",
+				FairSharing: &config.FairSharing{
+					Weight: 0,
+				},
+			},
+			checkFn: func(t *testing.T, cohort *kueue.Cohort) {
+				if cohort.Spec.FairSharing == nil {
+					t.Fatal("expected FairSharing to be set")
+				}
+				if cohort.Spec.FairSharing.Weight == nil {
+					t.Fatal("expected Weight to be set")
+				}
+				expectedWeight := resource.MustParse("0")
+				if cohort.Spec.FairSharing.Weight.Cmp(expectedWeight) != 0 {
+					t.Errorf("expected weight 0, got %v", cohort.Spec.FairSharing.Weight)
+				}
+			},
+		},
+		{
+			name: "cohort with resource groups",
+			input: config.Cohort{
+				Name: "platform",
+				ResourceGroups: []config.ResourceGroup{
+					{
+						CoveredResources: []string{"cpu", "memory"},
+						Flavors: []config.FlavorQuotas{
+							{
+								Name: "default",
+								Resources: []config.Resource{
+									{
+										Name:         "cpu",
+										NominalQuota: "100",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			checkFn: func(t *testing.T, cohort *kueue.Cohort) {
+				if len(cohort.Spec.ResourceGroups) != 1 {
+					t.Fatalf("expected 1 resource group, got %d", len(cohort.Spec.ResourceGroups))
+				}
+				rg := cohort.Spec.ResourceGroups[0]
+				if len(rg.CoveredResources) != 2 {
+					t.Errorf("expected 2 covered resources, got %d", len(rg.CoveredResources))
+				}
+				if len(rg.Flavors) != 1 {
+					t.Errorf("expected 1 flavor, got %d", len(rg.Flavors))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildCohort(tt.input)
+			tt.checkFn(t, result)
+		})
+	}
+}
+
 func TestBuildResourceFlavor(t *testing.T) {
 	tests := []struct {
 		name    string
