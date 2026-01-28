@@ -7,19 +7,32 @@ import (
 	"github.com/jhwagner/kueue-bench/pkg/config"
 )
 
+// TODO: I'm not actually sure all objects need to be created in dependency order.
+// We already validate configs are valid, so we may be able to simplify ProvisionKueueObjects
+// e.g. creating a child cohort before parent cohort is created is perfectly fine
+
 // ProvisionKueueObjects creates all Kueue objects from the configuration
 // Objects are created in dependency order:
-// 1. ResourceFlavors (referenced by ClusterQueues)
-// 2. ClusterQueues (referenced by LocalQueues)
-// 3. WorkloadPriorityClasses (independent)
-// 4. Namespaces (for LocalQueues)
-// 5. LocalQueues (last, depends on ClusterQueues and namespaces)
+// 1. Cohorts (Kueue handles parent references automatically)
+// 2. ResourceFlavors (referenced by ClusterQueues)
+// 3. ClusterQueues (referenced by LocalQueues)
+// 4. WorkloadPriorityClasses (independent)
+// 5. Namespaces (for LocalQueues)
+// 6. LocalQueues (last, depends on ClusterQueues and namespaces)
 func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *config.KueueConfig) error {
 	if kueueConfig == nil {
 		return nil
 	}
 
-	// Step 1: Create ResourceFlavors
+	// Step 1: Create Cohorts
+	for _, cohort := range kueueConfig.Cohorts {
+		kueueCohort := BuildCohort(cohort)
+		if err := client.CreateCohort(ctx, kueueCohort); err != nil {
+			return fmt.Errorf("failed to create Cohort %s: %w", cohort.Name, err)
+		}
+	}
+
+	// Step 2: Create ResourceFlavors
 	for _, rf := range kueueConfig.ResourceFlavors {
 		kueueRF := BuildResourceFlavor(rf)
 		if err := client.CreateResourceFlavor(ctx, kueueRF); err != nil {
@@ -27,7 +40,7 @@ func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *con
 		}
 	}
 
-	// Step 2: Create ClusterQueues
+	// Step 3: Create ClusterQueues
 	for _, cq := range kueueConfig.ClusterQueues {
 		kueueCQ := BuildClusterQueue(cq)
 		if err := client.CreateClusterQueue(ctx, kueueCQ); err != nil {
@@ -35,7 +48,7 @@ func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *con
 		}
 	}
 
-	// Step 3: Create WorkloadPriorityClasses
+	// Step 4: Create WorkloadPriorityClasses
 	for _, wpc := range kueueConfig.PriorityClasses {
 		kueueWPC := BuildWorkloadPriorityClass(wpc)
 		if err := client.CreateWorkloadPriorityClass(ctx, kueueWPC); err != nil {
@@ -43,7 +56,7 @@ func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *con
 		}
 	}
 
-	// Step 4: Create namespaces for LocalQueues
+	// Step 5: Create namespaces for LocalQueues
 	namespaces := getUniqueNamespaces(kueueConfig.LocalQueues)
 	for _, ns := range namespaces {
 		if err := client.CreateNamespace(ctx, ns); err != nil {
@@ -51,7 +64,7 @@ func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *con
 		}
 	}
 
-	// Step 5: Create LocalQueues
+	// Step 6: Create LocalQueues
 	for _, lq := range kueueConfig.LocalQueues {
 		kueueLQ := BuildLocalQueue(lq)
 		if err := client.CreateLocalQueue(ctx, kueueLQ); err != nil {
