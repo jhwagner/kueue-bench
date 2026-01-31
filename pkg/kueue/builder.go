@@ -78,6 +78,19 @@ func BuildClusterQueue(cq config.ClusterQueue) *kueue.ClusterQueue {
 		kueueCQ.Spec.Preemption = buildPreemptionConfig(cq.Preemption)
 	}
 
+	// Build admission checks if present
+	if len(cq.AdmissionChecks) > 0 {
+		kueueCQ.Spec.AdmissionChecks = make([]kueue.AdmissionCheckReference, len(cq.AdmissionChecks))
+		for i, ac := range cq.AdmissionChecks {
+			kueueCQ.Spec.AdmissionChecks[i] = kueue.AdmissionCheckReference(ac)
+		}
+	}
+
+	// Build fair sharing if present
+	if cq.FairSharing != nil {
+		kueueCQ.Spec.FairSharing = buildFairSharing(cq.FairSharing)
+	}
+
 	return kueueCQ
 }
 

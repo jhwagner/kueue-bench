@@ -99,6 +99,8 @@ type ClusterQueue struct {
 	NamespaceSelector *LabelSelector    `yaml:"namespaceSelector,omitempty"`
 	Preemption        *PreemptionConfig `yaml:"preemption,omitempty"`
 	ResourceGroups    []ResourceGroup   `yaml:"resourceGroups"`
+	AdmissionChecks   []string          `yaml:"admissionChecks,omitempty"`
+	FairSharing       *FairSharing      `yaml:"fairSharing,omitempty"`
 }
 
 // LabelSelector is a simplified label selector (supports matchLabels only for v1alpha1)

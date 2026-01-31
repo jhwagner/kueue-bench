@@ -282,6 +282,123 @@ func TestBuildClusterQueue(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "cluster queue with admission checks",
+			input: config.ClusterQueue{
+				Name:            "multikueue-cq",
+				AdmissionChecks: []string{"multikueue-ac", "sample-ac"},
+				ResourceGroups: []config.ResourceGroup{
+					{
+						CoveredResources: []string{"cpu"},
+						Flavors: []config.FlavorQuotas{
+							{
+								Name: "default-flavor",
+								Resources: []config.Resource{
+									{
+										Name:         "cpu",
+										NominalQuota: "100",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			checkFn: func(t *testing.T, cq *kueue.ClusterQueue) {
+				if len(cq.Spec.AdmissionChecks) != 2 {
+					t.Fatalf("expected 2 admission checks, got %d", len(cq.Spec.AdmissionChecks))
+				}
+				if cq.Spec.AdmissionChecks[0] != "multikueue-ac" {
+					t.Errorf("expected first admission check 'multikueue-ac', got '%s'", cq.Spec.AdmissionChecks[0])
+				}
+				if cq.Spec.AdmissionChecks[1] != "sample-ac" {
+					t.Errorf("expected second admission check 'sample-ac', got '%s'", cq.Spec.AdmissionChecks[1])
+				}
+			},
+		},
+		{
+			name: "cluster queue with fair sharing",
+			input: config.ClusterQueue{
+				Name:   "team-a-cq",
+				Cohort: "platform",
+				FairSharing: &config.FairSharing{
+					Weight: 2,
+				},
+				ResourceGroups: []config.ResourceGroup{
+					{
+						CoveredResources: []string{"cpu"},
+						Flavors: []config.FlavorQuotas{
+							{
+								Name: "default-flavor",
+								Resources: []config.Resource{
+									{
+										Name:         "cpu",
+										NominalQuota: "100",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			checkFn: func(t *testing.T, cq *kueue.ClusterQueue) {
+				if cq.Spec.FairSharing == nil {
+					t.Fatal("expected FairSharing to be set")
+				}
+				if cq.Spec.FairSharing.Weight == nil {
+					t.Fatal("expected Weight to be set")
+				}
+				expectedWeight := resource.MustParse("2")
+				if cq.Spec.FairSharing.Weight.Cmp(expectedWeight) != 0 {
+					t.Errorf("expected weight 2, got %v", cq.Spec.FairSharing.Weight)
+				}
+			},
+		},
+		{
+			name: "cluster queue with admission checks and fair sharing",
+			input: config.ClusterQueue{
+				Name:            "full-featured-cq",
+				Cohort:          "platform",
+				AdmissionChecks: []string{"multikueue-ac"},
+				FairSharing: &config.FairSharing{
+					Weight: 3,
+				},
+				ResourceGroups: []config.ResourceGroup{
+					{
+						CoveredResources: []string{"cpu"},
+						Flavors: []config.FlavorQuotas{
+							{
+								Name: "default-flavor",
+								Resources: []config.Resource{
+									{
+										Name:         "cpu",
+										NominalQuota: "100",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			checkFn: func(t *testing.T, cq *kueue.ClusterQueue) {
+				if len(cq.Spec.AdmissionChecks) != 1 {
+					t.Fatalf("expected 1 admission check, got %d", len(cq.Spec.AdmissionChecks))
+				}
+				if cq.Spec.AdmissionChecks[0] != "multikueue-ac" {
+					t.Errorf("expected admission check 'multikueue-ac', got '%s'", cq.Spec.AdmissionChecks[0])
+				}
+				if cq.Spec.FairSharing == nil {
+					t.Fatal("expected FairSharing to be set")
+				}
+				if cq.Spec.FairSharing.Weight == nil {
+					t.Fatal("expected Weight to be set")
+				}
+				expectedWeight := resource.MustParse("3")
+				if cq.Spec.FairSharing.Weight.Cmp(expectedWeight) != 0 {
+					t.Errorf("expected weight 3, got %v", cq.Spec.FairSharing.Weight)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
