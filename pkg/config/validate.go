@@ -120,14 +120,9 @@ func validateNodePoolContents(p *NodePool) error {
 
 func validateKueueConfig(k *KueueConfig, clusterIndex int, clusterName string) error {
 	// Validate Cohorts
-	if err := validateCohorts(k.Cohorts, clusterIndex, clusterName); err != nil {
+	cohortNames, err := validateCohorts(k.Cohorts, clusterIndex, clusterName)
+	if err != nil {
 		return err
-	}
-
-	// Build a map of cohort names for validation
-	cohortNames := make(map[string]bool)
-	for _, cohort := range k.Cohorts {
-		cohortNames[cohort.Name] = true
 	}
 
 	// Build a map of resource flavor names for validation
@@ -354,37 +349,30 @@ func validateWorkerSets(workerSets []WorkerSet, clusterNames map[string]bool) er
 	return nil
 }
 
-// validateCohorts validates cohort configuration
-func validateCohorts(cohorts []Cohort, clusterIndex int, clusterName string) error {
-	if len(cohorts) == 0 {
-		return nil
-	}
-
-	// Build a map of cohort names
-	cohortNames := make(map[string]bool)
+// validateCohorts validates cohort configuration and returns the set of cohort names.
+func validateCohorts(cohorts []Cohort, clusterIndex int, clusterName string) (map[string]bool, error) {
+	cohortNames := make(map[string]bool, len(cohorts))
 	for i, cohort := range cohorts {
 		if cohort.Name == "" {
-			return fmt.Errorf("cluster[%d] (%s): cohort[%d]: name is required",
+			return nil, fmt.Errorf("cluster[%d] (%s): cohort[%d]: name is required",
 				clusterIndex, clusterName, i)
 		}
 
 		if cohortNames[cohort.Name] {
-			return fmt.Errorf("cluster[%d] (%s): cohort[%d]: duplicate cohort name '%s'",
+			return nil, fmt.Errorf("cluster[%d] (%s): cohort[%d]: duplicate cohort name '%s'",
 				clusterIndex, clusterName, i, cohort.Name)
 		}
 
 		cohortNames[cohort.Name] = true
 	}
 
-	// Validate that parent cohorts exist
+	// Validate that parent cohorts exist (order-independent: map is fully populated above)
 	for i, cohort := range cohorts {
-		if cohort.ParentName != "" {
-			if !cohortNames[cohort.ParentName] {
-				return fmt.Errorf("cluster[%d] (%s): cohort[%d] (%s): unknown parent cohort '%s'",
-					clusterIndex, clusterName, i, cohort.Name, cohort.ParentName)
-			}
+		if cohort.ParentName != "" && !cohortNames[cohort.ParentName] {
+			return nil, fmt.Errorf("cluster[%d] (%s): cohort[%d] (%s): unknown parent cohort '%s'",
+				clusterIndex, clusterName, i, cohort.Name, cohort.ParentName)
 		}
 	}
 
-	return nil
+	return cohortNames, nil
 }
