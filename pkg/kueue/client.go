@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -47,63 +48,51 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 // CreateCohort creates or updates a Cohort
 func (c *Client) CreateCohort(ctx context.Context, cohort *kueue.Cohort) error {
 	_, err := c.kueueClient.KueueV1beta1().Cohorts().Create(ctx, cohort, metav1.CreateOptions{})
-	if err != nil {
-		// If create failed, try to update
+	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := c.kueueClient.KueueV1beta1().Cohorts().Get(ctx, cohort.Name, metav1.GetOptions{})
 		if getErr != nil {
-			return fmt.Errorf("failed to create Cohort %s: %w", cohort.Name, err)
+			return fmt.Errorf("failed to get Cohort %s: %w", cohort.Name, getErr)
 		}
-
-		// Preserve resourceVersion for update
 		cohort.ResourceVersion = existing.ResourceVersion
 		_, err = c.kueueClient.KueueV1beta1().Cohorts().Update(ctx, cohort, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update Cohort %s: %w", cohort.Name, err)
-		}
 	}
-
+	if err != nil {
+		return fmt.Errorf("failed to create or update Cohort %s: %w", cohort.Name, err)
+	}
 	return nil
 }
 
 // CreateResourceFlavor creates or updates a ResourceFlavor
 func (c *Client) CreateResourceFlavor(ctx context.Context, rf *kueue.ResourceFlavor) error {
 	_, err := c.kueueClient.KueueV1beta1().ResourceFlavors().Create(ctx, rf, metav1.CreateOptions{})
-	if err != nil {
-		// If create failed, try to update
+	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := c.kueueClient.KueueV1beta1().ResourceFlavors().Get(ctx, rf.Name, metav1.GetOptions{})
 		if getErr != nil {
-			return fmt.Errorf("failed to create ResourceFlavor %s: %w", rf.Name, err)
+			return fmt.Errorf("failed to get ResourceFlavor %s: %w", rf.Name, getErr)
 		}
-
-		// Preserve resourceVersion for update
 		rf.ResourceVersion = existing.ResourceVersion
 		_, err = c.kueueClient.KueueV1beta1().ResourceFlavors().Update(ctx, rf, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update ResourceFlavor %s: %w", rf.Name, err)
-		}
 	}
-
+	if err != nil {
+		return fmt.Errorf("failed to create or update ResourceFlavor %s: %w", rf.Name, err)
+	}
 	return nil
 }
 
 // CreateClusterQueue creates or updates a ClusterQueue
 func (c *Client) CreateClusterQueue(ctx context.Context, cq *kueue.ClusterQueue) error {
 	_, err := c.kueueClient.KueueV1beta1().ClusterQueues().Create(ctx, cq, metav1.CreateOptions{})
-	if err != nil {
-		// If create failed, try to update
+	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := c.kueueClient.KueueV1beta1().ClusterQueues().Get(ctx, cq.Name, metav1.GetOptions{})
 		if getErr != nil {
-			return fmt.Errorf("failed to create ClusterQueue %s: %w", cq.Name, err)
+			return fmt.Errorf("failed to get ClusterQueue %s: %w", cq.Name, getErr)
 		}
-
-		// Preserve resourceVersion for update
 		cq.ResourceVersion = existing.ResourceVersion
 		_, err = c.kueueClient.KueueV1beta1().ClusterQueues().Update(ctx, cq, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update ClusterQueue %s: %w", cq.Name, err)
-		}
 	}
-
+	if err != nil {
+		return fmt.Errorf("failed to create or update ClusterQueue %s: %w", cq.Name, err)
+	}
 	return nil
 }
 
@@ -115,42 +104,34 @@ func (c *Client) CreateLocalQueue(ctx context.Context, lq *kueue.LocalQueue) err
 	}
 
 	_, err := c.kueueClient.KueueV1beta1().LocalQueues(namespace).Create(ctx, lq, metav1.CreateOptions{})
-	if err != nil {
-		// If create failed, try to update
+	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := c.kueueClient.KueueV1beta1().LocalQueues(namespace).Get(ctx, lq.Name, metav1.GetOptions{})
 		if getErr != nil {
-			return fmt.Errorf("failed to create LocalQueue %s/%s: %w", namespace, lq.Name, err)
+			return fmt.Errorf("failed to get LocalQueue %s/%s: %w", namespace, lq.Name, getErr)
 		}
-
-		// Preserve resourceVersion for update
 		lq.ResourceVersion = existing.ResourceVersion
 		_, err = c.kueueClient.KueueV1beta1().LocalQueues(namespace).Update(ctx, lq, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update LocalQueue %s/%s: %w", namespace, lq.Name, err)
-		}
 	}
-
+	if err != nil {
+		return fmt.Errorf("failed to create or update LocalQueue %s/%s: %w", namespace, lq.Name, err)
+	}
 	return nil
 }
 
 // CreateWorkloadPriorityClass creates or updates a WorkloadPriorityClass
 func (c *Client) CreateWorkloadPriorityClass(ctx context.Context, wpc *kueue.WorkloadPriorityClass) error {
 	_, err := c.kueueClient.KueueV1beta1().WorkloadPriorityClasses().Create(ctx, wpc, metav1.CreateOptions{})
-	if err != nil {
-		// If create failed, try to update
+	if apierrors.IsAlreadyExists(err) {
 		existing, getErr := c.kueueClient.KueueV1beta1().WorkloadPriorityClasses().Get(ctx, wpc.Name, metav1.GetOptions{})
 		if getErr != nil {
-			return fmt.Errorf("failed to create WorkloadPriorityClass %s: %w", wpc.Name, err)
+			return fmt.Errorf("failed to get WorkloadPriorityClass %s: %w", wpc.Name, getErr)
 		}
-
-		// Preserve resourceVersion for update
 		wpc.ResourceVersion = existing.ResourceVersion
 		_, err = c.kueueClient.KueueV1beta1().WorkloadPriorityClasses().Update(ctx, wpc, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update WorkloadPriorityClass %s: %w", wpc.Name, err)
-		}
 	}
-
+	if err != nil {
+		return fmt.Errorf("failed to create or update WorkloadPriorityClass %s: %w", wpc.Name, err)
+	}
 	return nil
 }
 
