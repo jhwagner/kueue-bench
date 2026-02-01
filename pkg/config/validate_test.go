@@ -61,7 +61,7 @@ func TestValidateTopology(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "management role not supported yet",
+			name: "valid management role",
 			topo: &Topology{
 				APIVersion: "kueue-bench.io/v1alpha1",
 				Kind:       "Topology",
@@ -71,6 +71,26 @@ func TestValidateTopology(t *testing.T) {
 						{
 							Name: "test",
 							Role: "management",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid role",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "test",
+							Role: "invalid-role",
 							NodePools: []NodePool{
 								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
 							},
@@ -367,6 +387,239 @@ func TestValidateTopologyWithCohorts(t *testing.T) {
 			if tt.wantErr && tt.errContains != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("ValidateTopology() error = %v, expected to contain %q", err, tt.errContains)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateWorkerSets(t *testing.T) {
+	validWorkerSet := func() WorkerSet {
+		return WorkerSet{
+			Name: "gpu-workers",
+			ResourceFlavors: []WorkerSetFlavor{
+				{Name: "gpu-flavor", NodePoolRef: "gpu-pool"},
+			},
+			ClusterQueues: []WorkerSetClusterQueue{
+				{
+					Name: "team-cq",
+					ResourceGroups: []WorkerSetResourceGroup{
+						{
+							CoveredResources: []string{"nvidia.com/gpu", "cpu"},
+							Flavors:          []WorkerSetFlavorRef{{Name: "gpu-flavor"}},
+						},
+					},
+				},
+			},
+			LocalQueues: []LocalQueue{
+				{Name: "team-lq", Namespace: "team-ns", ClusterQueue: "team-cq"},
+			},
+			Workers: []Worker{
+				{
+					Name: "worker-1",
+					NodePools: []NodePool{
+						{
+							Name:  "gpu-pool",
+							Count: 10,
+							Resources: map[string]string{
+								"nvidia.com/gpu": "8",
+								"cpu":            "96",
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		workerSets   []WorkerSet
+		clusterNames map[string]bool
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name:         "valid workerSet",
+			workerSets:   []WorkerSet{validWorkerSet()},
+			clusterNames: map[string]bool{},
+			wantErr:      false,
+		},
+		{
+			name: "duplicate workerSet names",
+			workerSets: []WorkerSet{
+				validWorkerSet(),
+				validWorkerSet(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "duplicate workerSet name 'gpu-workers'",
+		},
+		{
+			name: "empty workerSet name",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.Name = ""
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "name is required",
+		},
+		{
+			name: "no resourceFlavors",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.ResourceFlavors = nil
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "at least one resourceFlavor is required",
+		},
+		{
+			name: "no clusterQueues",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.ClusterQueues = nil
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "at least one clusterQueue is required",
+		},
+		{
+			name: "no workers",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.Workers = nil
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "at least one worker is required",
+		},
+		{
+			name: "missing nodePoolRef",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.ResourceFlavors[0].NodePoolRef = ""
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "nodePoolRef is required",
+		},
+		{
+			name: "unknown flavor in clusterQueue",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.ClusterQueues[0].ResourceGroups[0].Flavors = []WorkerSetFlavorRef{
+						{Name: "nonexistent-flavor"},
+					}
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "unknown resourceFlavor 'nonexistent-flavor'",
+		},
+		{
+			name:         "worker name conflicts with cluster",
+			workerSets:   []WorkerSet{validWorkerSet()},
+			clusterNames: map[string]bool{"worker-1": true},
+			wantErr:      true,
+			errContains:  "conflicts with an existing cluster",
+		},
+		{
+			name: "duplicate worker names across workerSets",
+			workerSets: []WorkerSet{
+				validWorkerSet(),
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.Name = "other-workers"
+					return ws // same worker name "worker-1"
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "duplicate worker name 'worker-1'",
+		},
+		{
+			name: "nodePoolRef not found in worker",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.Workers[0].NodePools[0].Name = "other-pool"
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "nodePoolRef 'gpu-pool' (from resourceFlavor 'gpu-flavor') not found",
+		},
+		{
+			name: "covered resource missing from pool",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					delete(ws.Workers[0].NodePools[0].Resources, "cpu")
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "covered resource 'cpu' not found in pool resources",
+		},
+		{
+			name: "invalid pool count",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.Workers[0].NodePools[0].Count = 0
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "count must be > 0",
+		},
+		{
+			name: "localQueue references unknown clusterQueue",
+			workerSets: []WorkerSet{
+				func() WorkerSet {
+					ws := validWorkerSet()
+					ws.LocalQueues[0].ClusterQueue = "nonexistent-cq"
+					return ws
+				}(),
+			},
+			clusterNames: map[string]bool{},
+			wantErr:      true,
+			errContains:  "unknown clusterQueue 'nonexistent-cq'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWorkerSets(tt.workerSets, tt.clusterNames)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateWorkerSets() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("validateWorkerSets() error = %v, expected to contain %q", err, tt.errContains)
 				}
 			}
 		})

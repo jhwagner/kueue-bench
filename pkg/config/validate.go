@@ -29,14 +29,20 @@ func ValidateTopology(t *Topology) error {
 		return fmt.Errorf("metadata.name is required")
 	}
 
-	if len(t.Spec.Clusters) == 0 {
-		return fmt.Errorf("at least one cluster is required")
+	if len(t.Spec.Clusters) == 0 && len(t.Spec.WorkerSets) == 0 {
+		return fmt.Errorf("at least one cluster or workerSet is required")
 	}
 
+	clusterNames := make(map[string]bool, len(t.Spec.Clusters))
 	for i, cluster := range t.Spec.Clusters {
 		if err := validateCluster(&cluster, i); err != nil {
 			return err
 		}
+		clusterNames[cluster.Name] = true
+	}
+
+	if err := validateWorkerSets(t.Spec.WorkerSets, clusterNames); err != nil {
+		return err
 	}
 
 	return nil
@@ -47,9 +53,8 @@ func validateCluster(c *ClusterConfig, index int) error {
 		return fmt.Errorf("cluster[%d]: name is required", index)
 	}
 
-	// TODO: Initially only support standalone clusters
-	if c.Role != RoleStandalone {
-		return fmt.Errorf("cluster[%d] (%s): only 'standalone' role is currently supported (got '%s')",
+	if c.Role != RoleStandalone && c.Role != RoleManagement && c.Role != RoleWorker {
+		return fmt.Errorf("cluster[%d] (%s): invalid role '%s' (must be standalone, management, or worker)",
 			index, c.Name, c.Role)
 	}
 
@@ -78,29 +83,35 @@ func validateNodePool(p *NodePool, clusterIndex, poolIndex int, clusterName stri
 			clusterIndex, clusterName, poolIndex)
 	}
 
+	if err := validateNodePoolContents(p); err != nil {
+		return fmt.Errorf("cluster[%d] (%s): nodePool[%d] (%s): %w",
+			clusterIndex, clusterName, poolIndex, p.Name, err)
+	}
+
+	return nil
+}
+
+// validateNodePoolContents validates pool contents (count, resources, taints).
+// Callers wrap the returned error with appropriate context.
+func validateNodePoolContents(p *NodePool) error {
 	if p.Count <= 0 {
-		return fmt.Errorf("cluster[%d] (%s): nodePool[%d] (%s): count must be > 0",
-			clusterIndex, clusterName, poolIndex, p.Name)
+		return fmt.Errorf("count must be > 0")
 	}
 
 	if len(p.Resources) == 0 {
-		return fmt.Errorf("cluster[%d] (%s): nodePool[%d] (%s): at least one resource is required",
-			clusterIndex, clusterName, poolIndex, p.Name)
+		return fmt.Errorf("at least one resource is required")
 	}
 
-	// Validate resource quantities
 	for resName, quantity := range p.Resources {
 		if _, err := resource.ParseQuantity(quantity); err != nil {
-			return fmt.Errorf("cluster[%d] (%s): nodePool[%d] (%s): invalid resource quantity for %s: %w",
-				clusterIndex, clusterName, poolIndex, p.Name, resName, err)
+			return fmt.Errorf("invalid resource quantity for %s: %w", resName, err)
 		}
 	}
 
-	// Validate taint effects
 	for k, taint := range p.Taints {
 		if taint.Effect != "NoSchedule" && taint.Effect != "PreferNoSchedule" && taint.Effect != "NoExecute" {
-			return fmt.Errorf("cluster[%d] (%s): nodePool[%d] (%s): taint[%d]: invalid effect '%s' (must be NoSchedule, PreferNoSchedule, or NoExecute)",
-				clusterIndex, clusterName, poolIndex, p.Name, k, taint.Effect)
+			return fmt.Errorf("taint[%d]: invalid effect '%s' (must be NoSchedule, PreferNoSchedule, or NoExecute)",
+				k, taint.Effect)
 		}
 	}
 
@@ -184,6 +195,159 @@ func validateKueueConfig(k *KueueConfig, clusterIndex int, clusterName string) e
 		if !clusterQueueNames[lq.ClusterQueue] {
 			return fmt.Errorf("cluster[%d] (%s): localQueue[%d] (%s): unknown clusterQueue '%s'",
 				clusterIndex, clusterName, i, lq.Name, lq.ClusterQueue)
+		}
+	}
+
+	return nil
+}
+
+func validateWorkerSets(workerSets []WorkerSet, clusterNames map[string]bool) error {
+	wsNames := make(map[string]bool)
+	workerNames := make(map[string]bool)
+
+	for i, ws := range workerSets {
+		if ws.Name == "" {
+			return fmt.Errorf("workerSet[%d]: name is required", i)
+		}
+		if wsNames[ws.Name] {
+			return fmt.Errorf("workerSet[%d]: duplicate workerSet name '%s'", i, ws.Name)
+		}
+		wsNames[ws.Name] = true
+
+		if len(ws.ResourceFlavors) == 0 {
+			return fmt.Errorf("workerSet[%d] (%s): at least one resourceFlavor is required", i, ws.Name)
+		}
+		if len(ws.ClusterQueues) == 0 {
+			return fmt.Errorf("workerSet[%d] (%s): at least one clusterQueue is required", i, ws.Name)
+		}
+		if len(ws.Workers) == 0 {
+			return fmt.Errorf("workerSet[%d] (%s): at least one worker is required", i, ws.Name)
+		}
+
+		// Build flavor name to nodePoolRef map
+		flavorPools := make(map[string]string, len(ws.ResourceFlavors))
+		for j, f := range ws.ResourceFlavors {
+			if f.Name == "" {
+				return fmt.Errorf("workerSet[%d] (%s): resourceFlavor[%d]: name is required", i, ws.Name, j)
+			}
+			if f.NodePoolRef == "" {
+				return fmt.Errorf("workerSet[%d] (%s): resourceFlavor[%d] (%s): nodePoolRef is required", i, ws.Name, j, f.Name)
+			}
+			flavorPools[f.Name] = f.NodePoolRef
+		}
+
+		// Validate ClusterQueue structure and flavor references
+		cqNames := make(map[string]bool, len(ws.ClusterQueues))
+		for j, cq := range ws.ClusterQueues {
+			if cq.Name == "" {
+				return fmt.Errorf("workerSet[%d] (%s): clusterQueue[%d]: name is required", i, ws.Name, j)
+			}
+			cqNames[cq.Name] = true
+
+			if len(cq.ResourceGroups) == 0 {
+				return fmt.Errorf("workerSet[%d] (%s): clusterQueue[%d] (%s): at least one resourceGroup is required",
+					i, ws.Name, j, cq.Name)
+			}
+			for k, rg := range cq.ResourceGroups {
+				if len(rg.CoveredResources) == 0 {
+					return fmt.Errorf("workerSet[%d] (%s): clusterQueue[%d] (%s): resourceGroup[%d]: at least one coveredResource is required",
+						i, ws.Name, j, cq.Name, k)
+				}
+				for l, fr := range rg.Flavors {
+					if _, ok := flavorPools[fr.Name]; !ok {
+						return fmt.Errorf("workerSet[%d] (%s): clusterQueue[%d] (%s): resourceGroup[%d]: flavor[%d]: unknown resourceFlavor '%s'",
+							i, ws.Name, j, cq.Name, k, l, fr.Name)
+					}
+				}
+			}
+		}
+
+		// Validate LocalQueue references
+		for j, lq := range ws.LocalQueues {
+			if lq.Name == "" {
+				return fmt.Errorf("workerSet[%d] (%s): localQueue[%d]: name is required", i, ws.Name, j)
+			}
+			if lq.Namespace == "" {
+				return fmt.Errorf("workerSet[%d] (%s): localQueue[%d] (%s): namespace is required",
+					i, ws.Name, j, lq.Name)
+			}
+			if lq.ClusterQueue == "" {
+				return fmt.Errorf("workerSet[%d] (%s): localQueue[%d] (%s): clusterQueue is required",
+					i, ws.Name, j, lq.Name)
+			}
+			if !cqNames[lq.ClusterQueue] {
+				return fmt.Errorf("workerSet[%d] (%s): localQueue[%d] (%s): unknown clusterQueue '%s'",
+					i, ws.Name, j, lq.Name, lq.ClusterQueue)
+			}
+		}
+
+		// Build map of required resources per pool for cross-checking workers
+		poolRequiredResources := make(map[string]map[string]bool)
+		for _, cq := range ws.ClusterQueues {
+			for _, rg := range cq.ResourceGroups {
+				for _, fr := range rg.Flavors {
+					poolName := flavorPools[fr.Name]
+					if poolRequiredResources[poolName] == nil {
+						poolRequiredResources[poolName] = make(map[string]bool)
+					}
+					for _, cr := range rg.CoveredResources {
+						poolRequiredResources[poolName][cr] = true
+					}
+				}
+			}
+		}
+
+		// Validate each worker
+		for j, worker := range ws.Workers {
+			if worker.Name == "" {
+				return fmt.Errorf("workerSet[%d] (%s): worker[%d]: name is required", i, ws.Name, j)
+			}
+			if clusterNames[worker.Name] {
+				return fmt.Errorf("workerSet[%d] (%s): worker[%d]: name '%s' conflicts with an existing cluster",
+					i, ws.Name, j, worker.Name)
+			}
+			if workerNames[worker.Name] {
+				return fmt.Errorf("workerSet[%d] (%s): worker[%d]: duplicate worker name '%s'",
+					i, ws.Name, j, worker.Name)
+			}
+			workerNames[worker.Name] = true
+
+			if len(worker.NodePools) == 0 {
+				return fmt.Errorf("workerSet[%d] (%s): worker[%d] (%s): at least one nodePool is required",
+					i, ws.Name, j, worker.Name)
+			}
+
+			pools := make(map[string]NodePool, len(worker.NodePools))
+			for k, pool := range worker.NodePools {
+				if pool.Name == "" {
+					return fmt.Errorf("workerSet[%d] (%s): worker[%d] (%s): nodePool[%d]: name is required",
+						i, ws.Name, j, worker.Name, k)
+				}
+				if err := validateNodePoolContents(&pool); err != nil {
+					return fmt.Errorf("workerSet[%d] (%s): worker[%d] (%s): nodePool[%d] (%s): %w",
+						i, ws.Name, j, worker.Name, k, pool.Name, err)
+				}
+				pools[pool.Name] = pool
+			}
+
+			// Verify all nodePoolRefs exist in this worker
+			for _, f := range ws.ResourceFlavors {
+				if _, ok := pools[f.NodePoolRef]; !ok {
+					return fmt.Errorf("workerSet[%d] (%s): worker[%d] (%s): nodePoolRef '%s' (from resourceFlavor '%s') not found",
+						i, ws.Name, j, worker.Name, f.NodePoolRef, f.Name)
+				}
+			}
+
+			// Verify all covered resources exist in the referenced pools
+			for poolName, requiredResources := range poolRequiredResources {
+				pool := pools[poolName]
+				for cr := range requiredResources {
+					if _, ok := pool.Resources[cr]; !ok {
+						return fmt.Errorf("workerSet[%d] (%s): worker[%d] (%s): nodePool '%s': covered resource '%s' not found in pool resources",
+							i, ws.Name, j, worker.Name, poolName, cr)
+					}
+				}
+			}
 		}
 	}
 

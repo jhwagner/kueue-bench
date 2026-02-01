@@ -21,9 +21,10 @@ type Metadata struct {
 
 // TopologySpec defines the desired topology configuration
 type TopologySpec struct {
-	Kueue    *KueueSettings  `yaml:"kueue,omitempty"`
-	Kwok     *KwokSettings   `yaml:"kwok,omitempty"`
-	Clusters []ClusterConfig `yaml:"clusters"`
+	Kueue      *KueueSettings  `yaml:"kueue,omitempty"`
+	Kwok       *KwokSettings   `yaml:"kwok,omitempty"`
+	Clusters   []ClusterConfig `yaml:"clusters"`
+	WorkerSets []WorkerSet     `yaml:"workerSets,omitempty"`
 }
 
 // KueueSettings contains Kueue version and image settings
@@ -153,6 +154,55 @@ type WorkloadPriorityClass struct {
 	Name        string `yaml:"name"`
 	Value       int32  `yaml:"value"`
 	Description string `yaml:"description,omitempty"`
+}
+
+// WorkerSet defines a group of homogeneous workers for MultiKueue.
+// All workers share identical Kueue object structure (names, relationships);
+// values (labels, quotas) are derived from each worker's node pools.
+type WorkerSet struct {
+	Name            string                  `yaml:"name"`
+	ResourceFlavors []WorkerSetFlavor       `yaml:"resourceFlavors"`
+	ClusterQueues   []WorkerSetClusterQueue `yaml:"clusterQueues"`
+	LocalQueues     []LocalQueue            `yaml:"localQueues,omitempty"`
+	Workers         []Worker                `yaml:"workers"`
+}
+
+// WorkerSetFlavor maps a flavor to a node pool. At expansion time, the flavor's
+// nodeLabels and tolerations are derived from the referenced pool in each worker.
+type WorkerSetFlavor struct {
+	Name        string `yaml:"name"`
+	NodePoolRef string `yaml:"nodePoolRef"`
+}
+
+// WorkerSetClusterQueue defines ClusterQueue structure at the WorkerSet level.
+// Quotas for each flavor are derived from the node pool that flavor references.
+type WorkerSetClusterQueue struct {
+	Name              string                   `yaml:"name"`
+	Cohort            string                   `yaml:"cohort,omitempty"`
+	NamespaceSelector *LabelSelector           `yaml:"namespaceSelector,omitempty"`
+	Preemption        *PreemptionConfig        `yaml:"preemption,omitempty"`
+	ResourceGroups    []WorkerSetResourceGroup `yaml:"resourceGroups"`
+	AdmissionChecks   []string                 `yaml:"admissionChecks,omitempty"`
+	FairSharing       *FairSharing             `yaml:"fairSharing,omitempty"`
+}
+
+// WorkerSetResourceGroup groups covered resources and the flavors that provide them.
+type WorkerSetResourceGroup struct {
+	CoveredResources []string             `yaml:"coveredResources"`
+	Flavors          []WorkerSetFlavorRef `yaml:"flavors"`
+}
+
+// WorkerSetFlavorRef references a flavor by name. During expansion, nominalQuota
+// for each coveredResource is calculated as pool.count * pool.resources[resource].
+type WorkerSetFlavorRef struct {
+	Name string `yaml:"name"`
+}
+
+// Worker defines the per-worker infrastructure within a WorkerSet.
+// Each Worker becomes a ClusterConfig after expansion.
+type Worker struct {
+	Name      string     `yaml:"name"`
+	NodePools []NodePool `yaml:"nodePools"`
 }
 
 // TopologyMetadata stores runtime information about a created topology
