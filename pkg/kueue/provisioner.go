@@ -2,7 +2,6 @@ package kueue
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
 )
@@ -26,49 +25,43 @@ func ProvisionKueueObjects(ctx context.Context, client *Client, kueueConfig *con
 
 	// Step 1: Create Cohorts
 	for _, cohort := range kueueConfig.Cohorts {
-		kueueCohort := BuildCohort(cohort)
-		if err := client.CreateCohort(ctx, kueueCohort); err != nil {
-			return fmt.Errorf("failed to create Cohort %s: %w", cohort.Name, err)
+		if err := client.CreateCohort(ctx, BuildCohort(cohort)); err != nil {
+			return err
 		}
 	}
 
 	// Step 2: Create ResourceFlavors
 	for _, rf := range kueueConfig.ResourceFlavors {
-		kueueRF := BuildResourceFlavor(rf)
-		if err := client.CreateResourceFlavor(ctx, kueueRF); err != nil {
-			return fmt.Errorf("failed to create ResourceFlavor %s: %w", rf.Name, err)
+		if err := client.CreateResourceFlavor(ctx, BuildResourceFlavor(rf)); err != nil {
+			return err
 		}
 	}
 
 	// Step 3: Create ClusterQueues
 	for _, cq := range kueueConfig.ClusterQueues {
-		kueueCQ := BuildClusterQueue(cq)
-		if err := client.CreateClusterQueue(ctx, kueueCQ); err != nil {
-			return fmt.Errorf("failed to create ClusterQueue %s: %w", cq.Name, err)
+		if err := client.CreateClusterQueue(ctx, BuildClusterQueue(cq)); err != nil {
+			return err
 		}
 	}
 
 	// Step 4: Create WorkloadPriorityClasses
 	for _, wpc := range kueueConfig.PriorityClasses {
-		kueueWPC := BuildWorkloadPriorityClass(wpc)
-		if err := client.CreateWorkloadPriorityClass(ctx, kueueWPC); err != nil {
-			return fmt.Errorf("failed to create WorkloadPriorityClass %s: %w", wpc.Name, err)
+		if err := client.CreateWorkloadPriorityClass(ctx, BuildWorkloadPriorityClass(wpc)); err != nil {
+			return err
 		}
 	}
 
 	// Step 5: Create namespaces for LocalQueues
-	namespaces := getUniqueNamespaces(kueueConfig.LocalQueues)
-	for _, ns := range namespaces {
+	for _, ns := range getUniqueNamespaces(kueueConfig.LocalQueues) {
 		if err := client.CreateNamespace(ctx, ns); err != nil {
-			return fmt.Errorf("failed to create namespace %s: %w", ns, err)
+			return err
 		}
 	}
 
 	// Step 6: Create LocalQueues
 	for _, lq := range kueueConfig.LocalQueues {
-		kueueLQ := BuildLocalQueue(lq)
-		if err := client.CreateLocalQueue(ctx, kueueLQ); err != nil {
-			return fmt.Errorf("failed to create LocalQueue %s/%s: %w", kueueLQ.Namespace, lq.Name, err)
+		if err := client.CreateLocalQueue(ctx, BuildLocalQueue(lq)); err != nil {
+			return err
 		}
 	}
 

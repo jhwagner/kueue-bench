@@ -83,6 +83,7 @@ func runTopologyCreate(cmd *cobra.Command, args []string) error {
 	if name == "" {
 		return fmt.Errorf("topology name must be specified via argument or metadata.name in topology configuration file")
 	}
+	cfg.Metadata.Name = name
 
 	fmt.Printf("Creating topology '%s' from file '%s'...\n", name, topologyFile)
 

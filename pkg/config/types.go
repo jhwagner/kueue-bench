@@ -83,7 +83,7 @@ type Cohort struct {
 
 // FairSharing defines fair sharing configuration for cohorts and cluster queues
 type FairSharing struct {
-	Weight int32 `yaml:"weight,omitempty"`
+	Weight int32 `yaml:"weight"`
 }
 
 // ResourceFlavor represents a Kueue ResourceFlavor
