@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: test-job-
+  labels:
+    kueue.x-k8s.io/queue-name: default-lq
+spec:
+  parallelism: 2
+  completions: 2
+  template:
+    spec:
+      containers:
+      - name: sleep
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53
+        command: [ "/bin/sh" ]
+        args: [ "-c", "sleep 60" ]
+        resources:
+          requests:
+            cpu: "2"
+            memory: "8"
+          limits:
+            cpu: "2"
+            memory: "8"
+      restartPolicy: Never
+      tolerations:
+      - key: kwok.x-k8s.io/node
+        operator: Equal
+        value: "fake"
+        effect: NoSchedule
