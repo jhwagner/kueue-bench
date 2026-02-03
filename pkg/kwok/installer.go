@@ -108,6 +108,14 @@ func applyManifestFromURL(ctx context.Context, client dynamic.Interface, mapper 
 			continue
 		}
 
+		// Set hostNetwork on kwok-controller deployment to avoid kindnet crashing
+		// See: https://github.com/kubernetes-sigs/kwok/issues/819
+		if obj.GetKind() == "Deployment" && obj.GetName() == "kwok-controller" {
+			if err := unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "hostNetwork"); err != nil {
+				return fmt.Errorf("failed to set hostNetwork on kwok-controller: %w", err)
+			}
+		}
+
 		// Get GVR using discovery
 		mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 		if err != nil {
