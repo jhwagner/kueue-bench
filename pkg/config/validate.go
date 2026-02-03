@@ -45,6 +45,13 @@ func ValidateTopology(t *Topology) error {
 		return err
 	}
 
+	// If WorkerSets exist, require exactly one management cluster for MultiKueue
+	if len(t.Spec.WorkerSets) > 0 {
+		if err := validateMultiKueueTopology(t.Spec.Clusters); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -375,4 +382,20 @@ func validateCohorts(cohorts []Cohort, clusterIndex int, clusterName string) (ma
 	}
 
 	return cohortNames, nil
+}
+
+// validateMultiKueueTopology validates MultiKueue topology requirements.
+// When WorkerSets exist, exactly one cluster must have role: management.
+func validateMultiKueueTopology(clusters []ClusterConfig) error {
+	managementCount := 0
+	for _, cluster := range clusters {
+		if cluster.Role == RoleManagement {
+			managementCount++
+		}
+	}
+
+	if managementCount != 1 {
+		return fmt.Errorf("workerSets require exactly one cluster with role 'management', found %d", managementCount)
+	}
+	return nil
 }

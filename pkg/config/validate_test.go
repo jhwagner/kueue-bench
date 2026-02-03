@@ -625,3 +625,225 @@ func TestValidateWorkerSets(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMultiKueueTopology(t *testing.T) {
+	tests := []struct {
+		name        string
+		topo        *Topology
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid: workerSet with management cluster",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "management",
+							Role: "management",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+					WorkerSets: []WorkerSet{
+						{
+							Name: "workers",
+							ResourceFlavors: []WorkerSetFlavor{
+								{Name: "default", NodePoolRef: "pool"},
+							},
+							ClusterQueues: []WorkerSetClusterQueue{
+								{
+									Name: "cq",
+									ResourceGroups: []WorkerSetResourceGroup{
+										{
+											CoveredResources: []string{"cpu"},
+											Flavors:          []WorkerSetFlavorRef{{Name: "default"}},
+										},
+									},
+								},
+							},
+							Workers: []Worker{
+								{
+									Name: "worker-1",
+									NodePools: []NodePool{
+										{Name: "pool", Count: 1, Resources: map[string]string{"cpu": "1"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid: workerSet without management cluster",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "standalone",
+							Role: "standalone",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+					WorkerSets: []WorkerSet{
+						{
+							Name: "workers",
+							ResourceFlavors: []WorkerSetFlavor{
+								{Name: "default", NodePoolRef: "pool"},
+							},
+							ClusterQueues: []WorkerSetClusterQueue{
+								{
+									Name: "cq",
+									ResourceGroups: []WorkerSetResourceGroup{
+										{
+											CoveredResources: []string{"cpu"},
+											Flavors:          []WorkerSetFlavorRef{{Name: "default"}},
+										},
+									},
+								},
+							},
+							Workers: []Worker{
+								{
+									Name: "worker-1",
+									NodePools: []NodePool{
+										{Name: "pool", Count: 1, Resources: map[string]string{"cpu": "1"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "workerSets require exactly one cluster with role 'management', found 0",
+		},
+		{
+			name: "invalid: workerSet with multiple management clusters",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "management-1",
+							Role: "management",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+						{
+							Name: "management-2",
+							Role: "management",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+					WorkerSets: []WorkerSet{
+						{
+							Name: "workers",
+							ResourceFlavors: []WorkerSetFlavor{
+								{Name: "default", NodePoolRef: "pool"},
+							},
+							ClusterQueues: []WorkerSetClusterQueue{
+								{
+									Name: "cq",
+									ResourceGroups: []WorkerSetResourceGroup{
+										{
+											CoveredResources: []string{"cpu"},
+											Flavors:          []WorkerSetFlavorRef{{Name: "default"}},
+										},
+									},
+								},
+							},
+							Workers: []Worker{
+								{
+									Name: "worker-1",
+									NodePools: []NodePool{
+										{Name: "pool", Count: 1, Resources: map[string]string{"cpu": "1"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "workerSets require exactly one cluster with role 'management', found 2",
+		},
+		{
+			name: "valid: no workerSets, no management cluster required",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "standalone",
+							Role: "standalone",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid: no workerSets, multiple standalone clusters",
+			topo: &Topology{
+				APIVersion: "kueue-bench.io/v1alpha1",
+				Kind:       "Topology",
+				Metadata:   Metadata{Name: "test"},
+				Spec: TopologySpec{
+					Clusters: []ClusterConfig{
+						{
+							Name: "cluster-1",
+							Role: "standalone",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+						{
+							Name: "cluster-2",
+							Role: "standalone",
+							NodePools: []NodePool{
+								{Name: "pool1", Count: 1, Resources: map[string]string{"cpu": "1"}},
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateTopology(tt.topo)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateTopology() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("ValidateTopology() error = %v, expected to contain %q", err, tt.errContains)
+				}
+			}
+		})
+	}
+}
