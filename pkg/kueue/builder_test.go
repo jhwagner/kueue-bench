@@ -533,3 +533,141 @@ func TestGetUniqueNamespaces(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildMultiKueueCluster(t *testing.T) {
+	tests := []struct {
+		name                 string
+		clusterName          string
+		kubeconfigSecretName string
+		checkFn              func(*testing.T, *kueue.MultiKueueCluster)
+	}{
+		{
+			name:                 "simple multikueue cluster",
+			clusterName:          "worker-us-west",
+			kubeconfigSecretName: "worker-us-west-kubeconfig",
+			checkFn: func(t *testing.T, mkc *kueue.MultiKueueCluster) {
+				if mkc.Name != "worker-us-west" {
+					t.Errorf("expected name 'worker-us-west', got '%s'", mkc.Name)
+				}
+				if mkc.Spec.KubeConfig.Location != "worker-us-west-kubeconfig" {
+					t.Errorf("expected kubeconfig location 'worker-us-west-kubeconfig', got '%s'", mkc.Spec.KubeConfig.Location)
+				}
+				if mkc.Spec.KubeConfig.LocationType != kueue.SecretLocationType {
+					t.Errorf("expected location type 'Secret', got '%s'", mkc.Spec.KubeConfig.LocationType)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildMultiKueueCluster(tt.clusterName, tt.kubeconfigSecretName)
+			tt.checkFn(t, result)
+		})
+	}
+}
+
+func TestBuildMultiKueueConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		configName   string
+		clusterNames []string
+		checkFn      func(*testing.T, *kueue.MultiKueueConfig)
+	}{
+		{
+			name:         "multikueue config with single cluster",
+			configName:   "gpu-workers",
+			clusterNames: []string{"worker-us-west"},
+			checkFn: func(t *testing.T, mkc *kueue.MultiKueueConfig) {
+				if mkc.Name != "gpu-workers" {
+					t.Errorf("expected name 'gpu-workers', got '%s'", mkc.Name)
+				}
+				if len(mkc.Spec.Clusters) != 1 {
+					t.Fatalf("expected 1 cluster, got %d", len(mkc.Spec.Clusters))
+				}
+				if mkc.Spec.Clusters[0] != "worker-us-west" {
+					t.Errorf("expected cluster 'worker-us-west', got '%s'", mkc.Spec.Clusters[0])
+				}
+			},
+		},
+		{
+			name:         "multikueue config with multiple clusters",
+			configName:   "gpu-workers",
+			clusterNames: []string{"worker-us-west", "worker-us-east", "worker-eu-west"},
+			checkFn: func(t *testing.T, mkc *kueue.MultiKueueConfig) {
+				if mkc.Name != "gpu-workers" {
+					t.Errorf("expected name 'gpu-workers', got '%s'", mkc.Name)
+				}
+				if len(mkc.Spec.Clusters) != 3 {
+					t.Fatalf("expected 3 clusters, got %d", len(mkc.Spec.Clusters))
+				}
+				expectedClusters := map[string]bool{
+					"worker-us-west": false,
+					"worker-us-east": false,
+					"worker-eu-west": false,
+				}
+				for _, cluster := range mkc.Spec.Clusters {
+					if _, ok := expectedClusters[cluster]; ok {
+						expectedClusters[cluster] = true
+					} else {
+						t.Errorf("unexpected cluster '%s'", cluster)
+					}
+				}
+				for cluster, found := range expectedClusters {
+					if !found {
+						t.Errorf("expected cluster '%s' not found", cluster)
+					}
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildMultiKueueConfig(tt.configName, tt.clusterNames)
+			tt.checkFn(t, result)
+		})
+	}
+}
+
+func TestBuildAdmissionCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		checkName  string
+		configName string
+		checkFn    func(*testing.T, *kueue.AdmissionCheck)
+	}{
+		{
+			name:       "admission check for multikueue",
+			checkName:  "gpu-workers",
+			configName: "gpu-workers",
+			checkFn: func(t *testing.T, ac *kueue.AdmissionCheck) {
+				if ac.Name != "gpu-workers" {
+					t.Errorf("expected name 'gpu-workers', got '%s'", ac.Name)
+				}
+				if ac.Spec.ControllerName != kueue.MultiKueueControllerName {
+					t.Errorf("expected controller name '%s', got '%s'", kueue.MultiKueueControllerName, ac.Spec.ControllerName)
+				}
+				if ac.Spec.Parameters == nil {
+					t.Fatal("expected Parameters to be set")
+				}
+				if ac.Spec.Parameters.APIGroup != kueue.SchemeGroupVersion.Group {
+					t.Errorf("expected APIGroup '%s', got '%s'", kueue.SchemeGroupVersion.Group, ac.Spec.Parameters.APIGroup)
+				}
+				if ac.Spec.Parameters.Kind != "MultiKueueConfig" {
+					t.Errorf("expected Kind 'MultiKueueConfig', got '%s'", ac.Spec.Parameters.Kind)
+				}
+				if ac.Spec.Parameters.Name != "gpu-workers" {
+					t.Errorf("expected Name 'gpu-workers', got '%s'", ac.Spec.Parameters.Name)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BuildAdmissionCheck(tt.checkName, tt.configName)
+			tt.checkFn(t, result)
+		})
+	}
+}

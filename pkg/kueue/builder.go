@@ -207,3 +207,44 @@ func BuildWorkloadPriorityClass(wpc config.WorkloadPriorityClass) *kueue.Workloa
 		Description: wpc.Description,
 	}
 }
+
+// BuildMultiKueueCluster builds a Kueue MultiKueueCluster
+func BuildMultiKueueCluster(name, kubeconfigSecretName string) *kueue.MultiKueueCluster {
+	return &kueue.MultiKueueCluster{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "MultiKueueCluster"},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: kueue.MultiKueueClusterSpec{
+			KubeConfig: kueue.KubeConfig{
+				Location:     kubeconfigSecretName,
+				LocationType: kueue.SecretLocationType,
+			},
+		},
+	}
+}
+
+// BuildMultiKueueConfig builds a Kueue MultiKueueConfig
+func BuildMultiKueueConfig(name string, clusterNames []string) *kueue.MultiKueueConfig {
+	return &kueue.MultiKueueConfig{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "MultiKueueConfig"},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: kueue.MultiKueueConfigSpec{
+			Clusters: clusterNames,
+		},
+	}
+}
+
+// BuildAdmissionCheck builds a Kueue AdmissionCheck for MultiKueue
+func BuildAdmissionCheck(name, configName string) *kueue.AdmissionCheck {
+	return &kueue.AdmissionCheck{
+		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "AdmissionCheck"},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: kueue.AdmissionCheckSpec{
+			ControllerName: kueue.MultiKueueControllerName,
+			Parameters: &kueue.AdmissionCheckParametersReference{
+				APIGroup: kueue.SchemeGroupVersion.Group,
+				Kind:     "MultiKueueConfig",
+				Name:     configName,
+			},
+		},
+	}
+}

@@ -157,3 +157,82 @@ func (c *Client) CreateNamespace(ctx context.Context, name string) error {
 
 	return nil
 }
+
+// CreateKubeconfigSecret creates a Secret containing kubeconfig data
+func (c *Client) CreateKubeconfigSecret(ctx context.Context, namespace, name string, kubeconfigData []byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			kueue.MultiKueueConfigSecretKey: kubeconfigData,
+		},
+	}
+
+	_, err := c.clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get Secret %s/%s: %w", namespace, name, getErr)
+		}
+		secret.ResourceVersion = existing.ResourceVersion
+		_, err = c.clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create or update Secret %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// CreateMultiKueueCluster creates or updates a MultiKueueCluster
+func (c *Client) CreateMultiKueueCluster(ctx context.Context, mkc *kueue.MultiKueueCluster) error {
+	_, err := c.kueueClient.KueueV1beta1().MultiKueueClusters().Create(ctx, mkc, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := c.kueueClient.KueueV1beta1().MultiKueueClusters().Get(ctx, mkc.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get MultiKueueCluster %s: %w", mkc.Name, getErr)
+		}
+		mkc.ResourceVersion = existing.ResourceVersion
+		_, err = c.kueueClient.KueueV1beta1().MultiKueueClusters().Update(ctx, mkc, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create or update MultiKueueCluster %s: %w", mkc.Name, err)
+	}
+	return nil
+}
+
+// CreateMultiKueueConfig creates or updates a MultiKueueConfig
+func (c *Client) CreateMultiKueueConfig(ctx context.Context, mkc *kueue.MultiKueueConfig) error {
+	_, err := c.kueueClient.KueueV1beta1().MultiKueueConfigs().Create(ctx, mkc, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := c.kueueClient.KueueV1beta1().MultiKueueConfigs().Get(ctx, mkc.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get MultiKueueConfig %s: %w", mkc.Name, getErr)
+		}
+		mkc.ResourceVersion = existing.ResourceVersion
+		_, err = c.kueueClient.KueueV1beta1().MultiKueueConfigs().Update(ctx, mkc, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create or update MultiKueueConfig %s: %w", mkc.Name, err)
+	}
+	return nil
+}
+
+// CreateAdmissionCheck creates or updates an AdmissionCheck
+func (c *Client) CreateAdmissionCheck(ctx context.Context, ac *kueue.AdmissionCheck) error {
+	_, err := c.kueueClient.KueueV1beta1().AdmissionChecks().Create(ctx, ac, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := c.kueueClient.KueueV1beta1().AdmissionChecks().Get(ctx, ac.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get AdmissionCheck %s: %w", ac.Name, getErr)
+		}
+		ac.ResourceVersion = existing.ResourceVersion
+		_, err = c.kueueClient.KueueV1beta1().AdmissionChecks().Update(ctx, ac, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create or update AdmissionCheck %s: %w", ac.Name, err)
+	}
+	return nil
+}
