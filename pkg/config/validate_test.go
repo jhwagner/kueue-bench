@@ -626,6 +626,118 @@ func TestValidateWorkerSets(t *testing.T) {
 	}
 }
 
+func TestValidateExtensions(t *testing.T) {
+	tests := []struct {
+		name        string
+		extensions  []Extension
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid helm extension",
+			extensions: []Extension{
+				{
+					Name: "jobset",
+					Helm: &HelmExtension{
+						Chart:     "oci://registry.k8s.io/jobset/charts/jobset",
+						Version:   "0.11.0",
+						Namespace: "jobset-system",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid manifest extension",
+			extensions: []Extension{
+				{
+					Name:     "custom-crds",
+					Manifest: &ManifestExtension{URL: "https://example.com/crds.yaml"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing name",
+			extensions: []Extension{
+				{
+					Helm: &HelmExtension{Chart: "oci://example.com/chart"},
+				},
+			},
+			wantErr:     true,
+			errContains: "name is required",
+		},
+		{
+			name: "duplicate names",
+			extensions: []Extension{
+				{Name: "ext1", Helm: &HelmExtension{Chart: "oci://example.com/chart1"}},
+				{Name: "ext1", Helm: &HelmExtension{Chart: "oci://example.com/chart2"}},
+			},
+			wantErr:     true,
+			errContains: "duplicate extension name 'ext1'",
+		},
+		{
+			name: "neither helm nor manifest",
+			extensions: []Extension{
+				{Name: "empty"},
+			},
+			wantErr:     true,
+			errContains: "exactly one of 'helm' or 'manifest' is required",
+		},
+		{
+			name: "both helm and manifest",
+			extensions: []Extension{
+				{
+					Name:     "both",
+					Helm:     &HelmExtension{Chart: "oci://example.com/chart"},
+					Manifest: &ManifestExtension{URL: "https://example.com/manifest.yaml"},
+				},
+			},
+			wantErr:     true,
+			errContains: "cannot specify both 'helm' and 'manifest'",
+		},
+		{
+			name: "helm missing chart",
+			extensions: []Extension{
+				{Name: "no-chart", Helm: &HelmExtension{}},
+			},
+			wantErr:     true,
+			errContains: "helm.chart is required",
+		},
+		{
+			name: "manifest missing url",
+			extensions: []Extension{
+				{Name: "no-url", Manifest: &ManifestExtension{}},
+			},
+			wantErr:     true,
+			errContains: "manifest.url is required",
+		},
+		{
+			name: "manifest non-http url",
+			extensions: []Extension{
+				{Name: "bad-url", Manifest: &ManifestExtension{URL: "ftp://example.com/crds.yaml"}},
+			},
+			wantErr:     true,
+			errContains: "manifest.url must start with http:// or https://",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExtensions(tt.extensions, 0, "test-cluster")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateExtensions() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errContains != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("validateExtensions() error = %v, expected to contain %q", err, tt.errContains)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateMultiKueueTopology(t *testing.T) {
 	tests := []struct {
 		name        string

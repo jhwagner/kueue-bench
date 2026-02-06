@@ -11,6 +11,7 @@ import (
 
 	"github.com/jhwagner/kueue-bench/pkg/cluster"
 	"github.com/jhwagner/kueue-bench/pkg/config"
+	"github.com/jhwagner/kueue-bench/pkg/extensions"
 	"github.com/jhwagner/kueue-bench/pkg/kueue"
 	"github.com/jhwagner/kueue-bench/pkg/kwok"
 )
@@ -111,6 +112,13 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (t *Topology
 		// Install Kueue
 		if err := kueue.Install(ctx, kubeconfigPath, kueueVersion, kueueImageRepository, kueueImageTag); err != nil {
 			return nil, fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterName, err)
+		}
+
+		// Install extensions (after Kueue, before Kueue objects)
+		if len(clusterCfg.Extensions) > 0 {
+			if err := extensions.InstallExtensions(ctx, kubeconfigPath, clusterCfg.Extensions); err != nil {
+				return nil, fmt.Errorf("failed to install extensions in cluster '%s': %w", clusterName, err)
+			}
 		}
 
 		// Provision Kueue objects (if specified)

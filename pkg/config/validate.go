@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -77,6 +78,12 @@ func validateCluster(c *ClusterConfig, index int) error {
 
 	if c.Kueue != nil {
 		if err := validateKueueConfig(c.Kueue, index, c.Name); err != nil {
+			return err
+		}
+	}
+
+	if len(c.Extensions) > 0 {
+		if err := validateExtensions(c.Extensions, index, c.Name); err != nil {
 			return err
 		}
 	}
@@ -397,5 +404,56 @@ func validateMultiKueueTopology(clusters []ClusterConfig) error {
 	if managementCount != 1 {
 		return fmt.Errorf("workerSets require exactly one cluster with role 'management', found %d", managementCount)
 	}
+	return nil
+}
+
+// validateExtensions validates extensions configuration for a cluster.
+func validateExtensions(extensions []Extension, clusterIndex int, clusterName string) error {
+	names := make(map[string]bool, len(extensions))
+
+	for i, ext := range extensions {
+		if ext.Name == "" {
+			return fmt.Errorf("cluster[%d] (%s): extension[%d]: name is required",
+				clusterIndex, clusterName, i)
+		}
+
+		if names[ext.Name] {
+			return fmt.Errorf("cluster[%d] (%s): extension[%d]: duplicate extension name '%s'",
+				clusterIndex, clusterName, i, ext.Name)
+		}
+		names[ext.Name] = true
+
+		hasHelm := ext.Helm != nil
+		hasManifest := ext.Manifest != nil
+
+		if !hasHelm && !hasManifest {
+			return fmt.Errorf("cluster[%d] (%s): extension[%d] (%s): exactly one of 'helm' or 'manifest' is required",
+				clusterIndex, clusterName, i, ext.Name)
+		}
+
+		if hasHelm && hasManifest {
+			return fmt.Errorf("cluster[%d] (%s): extension[%d] (%s): cannot specify both 'helm' and 'manifest'",
+				clusterIndex, clusterName, i, ext.Name)
+		}
+
+		if hasHelm {
+			if ext.Helm.Chart == "" {
+				return fmt.Errorf("cluster[%d] (%s): extension[%d] (%s): helm.chart is required",
+					clusterIndex, clusterName, i, ext.Name)
+			}
+		}
+
+		if hasManifest {
+			if ext.Manifest.URL == "" {
+				return fmt.Errorf("cluster[%d] (%s): extension[%d] (%s): manifest.url is required",
+					clusterIndex, clusterName, i, ext.Name)
+			}
+			if !strings.HasPrefix(ext.Manifest.URL, "http://") && !strings.HasPrefix(ext.Manifest.URL, "https://") {
+				return fmt.Errorf("cluster[%d] (%s): extension[%d] (%s): manifest.url must start with http:// or https://",
+					clusterIndex, clusterName, i, ext.Name)
+			}
+		}
+	}
+
 	return nil
 }

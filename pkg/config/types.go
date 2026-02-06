@@ -46,6 +46,31 @@ type ClusterConfig struct {
 	KubernetesVersion string       `yaml:"kubernetesVersion,omitempty"`
 	NodePools         []NodePool   `yaml:"nodePools"`
 	Kueue             *KueueConfig `yaml:"kueue,omitempty"`
+	Extensions        []Extension  `yaml:"extensions,omitempty"`
+}
+
+// Extension defines an additional component to install in a cluster
+type Extension struct {
+	Name     string             `yaml:"name"`
+	Helm     *HelmExtension     `yaml:"helm,omitempty"`
+	Manifest *ManifestExtension `yaml:"manifest,omitempty"`
+}
+
+// HelmExtension defines a Helm chart to install
+type HelmExtension struct {
+	Chart           string            `yaml:"chart"`
+	Version         string            `yaml:"version,omitempty"`
+	ReleaseName     string            `yaml:"releaseName,omitempty"`
+	Namespace       string            `yaml:"namespace,omitempty"`
+	CreateNamespace *bool             `yaml:"createNamespace,omitempty"` // default: true
+	Wait            *bool             `yaml:"wait,omitempty"`            // default: true
+	Timeout         string            `yaml:"timeout,omitempty"`         // default: "5m"
+	Set             map[string]string `yaml:"set,omitempty"`
+}
+
+// ManifestExtension defines a raw manifest to apply from a URL
+type ManifestExtension struct {
+	URL string `yaml:"url"`
 }
 
 // NodePool defines a pool of simulated nodes
