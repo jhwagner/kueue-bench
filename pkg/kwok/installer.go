@@ -7,10 +7,8 @@ import (
 
 	"github.com/jhwagner/kueue-bench/pkg/manifest"
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -60,9 +58,14 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 	}
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discoveryClient))
 
-	// Apply Kwok controller manifest
+	// Apply Kwok controller manifest with hostNetwork patch
 	kwokURL := fmt.Sprintf(kwokManifestURLTemplate, version)
-	if err := applyManifestFromURL(ctx, dynamicClient, mapper, kwokURL); err != nil {
+	hostNetworkMutator := func(obj *unstructured.Unstructured) {
+		if obj.GetKind() == "Deployment" && obj.GetName() == "kwok-controller" {
+			unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "hostNetwork")
+		}
+	}
+	if err := manifest.ApplyURL(ctx, dynamicClient, mapper, kwokURL, hostNetworkMutator); err != nil {
 		return fmt.Errorf("failed to install Kwok controller: %w", err)
 	}
 
@@ -71,7 +74,7 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 
 	// Apply Kwok stage manifest for pod lifecycle
 	stageURL := fmt.Sprintf(kwokStageManifestURLTemplate, version)
-	if err := applyManifestFromURL(ctx, dynamicClient, mapper, stageURL); err != nil {
+	if err := manifest.ApplyURL(ctx, dynamicClient, mapper, stageURL); err != nil {
 		return fmt.Errorf("failed to install Kwok stages: %w", err)
 	}
 
@@ -82,69 +85,6 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 	}
 
 	fmt.Println("✓ Kwok installed successfully")
-	return nil
-}
-
-// applyManifestFromURL fetches a manifest from URL and applies all resources to the cluster
-func applyManifestFromURL(ctx context.Context, client dynamic.Interface, mapper *restmapper.DeferredDiscoveryRESTMapper, manifestURL string) error {
-	// Fetch YAML documents
-	documents, err := manifest.FetchYAMLDocuments(manifestURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch manifest: %w", err)
-	}
-
-	// Apply each document
-	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-
-	for i, doc := range documents {
-		obj := &unstructured.Unstructured{}
-		_, gvk, err := decoder.Decode(doc, nil, obj)
-		if err != nil {
-			return fmt.Errorf("failed to decode document %d: %w", i, err)
-		}
-
-		// Skip empty objects
-		if gvk == nil || obj.GetKind() == "" {
-			continue
-		}
-
-		// Set hostNetwork on kwok-controller deployment to avoid kindnet crashing
-		// See: https://github.com/kubernetes-sigs/kwok/issues/819
-		if obj.GetKind() == "Deployment" && obj.GetName() == "kwok-controller" {
-			if err := unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "hostNetwork"); err != nil {
-				return fmt.Errorf("failed to set hostNetwork on kwok-controller: %w", err)
-			}
-		}
-
-		// Get GVR using discovery
-		mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-		if err != nil {
-			return fmt.Errorf("failed to get REST mapping for %s: %w", gvk.String(), err)
-		}
-
-		// Determine if resource is namespaced
-		var resourceClient dynamic.ResourceInterface
-		if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-			namespace := obj.GetNamespace()
-			if namespace == "" {
-				namespace = "default"
-			}
-			resourceClient = client.Resource(mapping.Resource).Namespace(namespace)
-		} else {
-			resourceClient = client.Resource(mapping.Resource)
-		}
-
-		// Create or update
-		_, err = resourceClient.Create(ctx, obj, metav1.CreateOptions{})
-		if err != nil {
-			// Try update if create fails (resource might already exist)
-			_, err = resourceClient.Update(ctx, obj, metav1.UpdateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to apply %s %s: %w", obj.GetKind(), obj.GetName(), err)
-			}
-		}
-	}
-
 	return nil
 }
 
