@@ -67,7 +67,7 @@ func CreateCluster(ctx context.Context, name string, cfg *config.ClusterConfig, 
 	}
 
 	// Export kubeconfig to specified path
-	if err := exportKubeconfig(name, kubeconfigPath); err != nil {
+	if err := ExportKubeconfig(name, kubeconfigPath); err != nil {
 		return fmt.Errorf("failed to export kubeconfig: %w", err)
 	}
 
@@ -177,11 +177,11 @@ func writeTempKindConfig(cfg *kindClusterConfig) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-func exportKubeconfig(name string, kubeconfigPath string) error {
-	cmd := exec.Command("kind", "get", "kubeconfig", "--name", name)
-	output, err := cmd.Output()
+// ExportKubeconfig exports a kubeconfig for the given kind cluster to a file.
+func ExportKubeconfig(name string, kubeconfigPath string) error {
+	data, err := GetKubeconfig(name, false)
 	if err != nil {
-		return fmt.Errorf("failed to get kubeconfig: %w", err)
+		return err
 	}
 
 	// Ensure directory exists
@@ -189,10 +189,25 @@ func exportKubeconfig(name string, kubeconfigPath string) error {
 		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
 	}
 
-	// Write kubeconfig to specified path
-	if err := os.WriteFile(kubeconfigPath, output, 0600); err != nil {
+	if err := os.WriteFile(kubeconfigPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig: %w", err)
 	}
 
 	return nil
+}
+
+// GetKubeconfig returns the raw kubeconfig bytes for a kind cluster.
+// When internal is true, uses the cluster's Docker network address instead of 127.0.0.1,
+// which is needed for inter-cluster connectivity (e.g. MultiKueue management to worker).
+func GetKubeconfig(name string, internal bool) ([]byte, error) {
+	args := []string{"get", "kubeconfig", "--name", name}
+	if internal {
+		args = append(args, "--internal")
+	}
+	cmd := exec.Command("kind", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
+	}
+	return output, nil
 }
