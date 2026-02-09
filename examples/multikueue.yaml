@@ -1,0 +1,92 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: multikueue
+spec:
+  kueue:
+    version: "0.15.2"
+    helmValues:
+      managerConfig:
+        controllerManagerConfigYaml: |-
+          integrations:
+            frameworks:
+              - "batch/job"
+  kwok:
+    version: "v0.7.0"
+
+  clusters:
+    - name: management
+      role: management  # Identifies this as the MultiKueue management cluster
+
+      nodePools:
+        # Workloads do not run in management, no need to create kwok pools
+        # TODO: update validation to allow for empty nodePools (i.e. no kwok nodes)
+        - name: control-plane
+          count: 1
+          resources: {cpu: "4", memory: "16Gi"}
+
+      kueue:
+        # namespaces, ClusterQueues, LocalQueues, etc. are all derived from the workerSet clusters
+        cohorts:
+          # Optionally define cohort hierarchy
+          - name: global
+          - name: team-a
+            parentName: global
+            fairSharing: {weight: 2}
+          - name: team-b
+            parentName: global
+            fairSharing: {weight: 1}
+
+  workerSets:
+    - name: gpu-workers
+      resourceFlavors:
+        - name: gpu-pool
+          nodePoolRef: gpu-pool  # labels/tolerations derived from each worker's 'gpu-pool' node pool
+      clusterQueues:  # ClusterQueues will be created on both management and workers
+        - name: team-a-cq
+          namespaceSelector: {}  # Match all namespaces
+          cohort: team-a
+          resourceGroups:
+            - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+              flavors:
+                - name: gpu-pool  # Worker quotas are derived: pool.count * pool.resources[resource]
+                                  # Management quota: sum of all worker quotas
+      localQueues:
+        - name: team-a-lq
+          namespace: team-a
+          clusterQueue: team-a-cq
+      # Define clusters in this worker set
+      # Each worker should have node pools of the same name, corresponding to above resource flavors,
+      # but each node pool can have cluster-specific sizes, resources, labels, etc.
+      # Allows for a single ResourceFlavor to translate to multiple underlying node pools across clusters
+      workers:
+        - name: us-west
+          nodePools:
+            - name: gpu-pool
+              count: 100
+              resources:
+                cpu: "32"
+                memory: "256Gi"
+                nvidia.com/gpu: "8"
+              labels:
+                eks.amazonaws.com/gpu: b200
+        - name: us-east
+          nodePools:
+            - name: gpu-pool
+              count: 50
+              resources:
+                cpu: "32"
+                memory: "256Gi"
+                nvidia.com/gpu: "8"
+              labels:
+                eks.amazonaws.com/gpu: b200
+        - name: us-central
+          nodePools:
+            - name: gpu-pool
+              count: 25
+              resources:
+                cpu: "32"
+                memory: "256Gi"
+                nvidia.com/gpu: "8"
+              labels:
+                cloud.google.com/gke-accelerator: nvidia-b200

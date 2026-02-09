@@ -27,11 +27,10 @@ type TopologySpec struct {
 	WorkerSets []WorkerSet     `yaml:"workerSets,omitempty"`
 }
 
-// KueueSettings contains Kueue version and image settings
+// KueueSettings contains Kueue version and Helm values settings
 type KueueSettings struct {
-	Version         string `yaml:"version,omitempty"`
-	ImageRepository string `yaml:"imageRepository,omitempty"`
-	ImageTag        string `yaml:"imageTag,omitempty"`
+	Version    string                 `yaml:"version,omitempty"`
+	HelmValues map[string]interface{} `yaml:"helmValues,omitempty"`
 }
 
 // KwokSettings contains Kwok version settings

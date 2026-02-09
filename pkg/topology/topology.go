@@ -74,71 +74,98 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (t *Topology
 		kwokVersion = cfg.Spec.Kwok.Version
 	}
 
-	// Get Kueue version and image from spec
+	// Get Kueue version and helm values from spec
 	kueueVersion := kueue.DefaultKueueVersion
-	kueueImageRepository := ""
-	kueueImageTag := ""
+	var kueueHelmValues map[string]interface{}
 	if cfg.Spec.Kueue != nil {
 		if cfg.Spec.Kueue.Version != "" {
 			kueueVersion = cfg.Spec.Kueue.Version
 		}
-		kueueImageRepository = cfg.Spec.Kueue.ImageRepository
-		kueueImageTag = cfg.Spec.Kueue.ImageTag
+		kueueHelmValues = cfg.Spec.Kueue.HelmValues
 	}
 
-	// Create each cluster with all components
-	for _, clusterCfg := range cfg.Spec.Clusters {
-		clusterName := clusterCfg.Name
-		kindClusterName := t.getKindClusterName(clusterName)
-		kubeconfigPath := filepath.Join(topologyDir, fmt.Sprintf("%s.kubeconfig", clusterName))
+	// Expand WorkerSets into worker ClusterConfigs
+	expandedWorkers, err := config.ExpandWorkerSets(cfg.Spec.WorkerSets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand worker sets: %w", err)
+	}
 
-		// Create kind cluster
-		if err := cluster.CreateCluster(ctx, kindClusterName, &clusterCfg, kubeconfigPath); err != nil {
-			return nil, fmt.Errorf("failed to create cluster '%s': %w", clusterName, err)
+	// Combine explicit clusters with expanded workers (new slice to avoid mutating cfg.Spec.Clusters)
+	allClusters := make([]config.ClusterConfig, 0, len(cfg.Spec.Clusters)+len(expandedWorkers))
+	allClusters = append(allClusters, cfg.Spec.Clusters...)
+	allClusters = append(allClusters, expandedWorkers...)
+
+	// Classify clusters by role in a single pass
+	var managementCluster *config.ClusterConfig
+	var workerClusters []*config.ClusterConfig
+	var standaloneClusters []*config.ClusterConfig
+	for i := range allClusters {
+		switch allClusters[i].Role {
+		case config.RoleManagement:
+			managementCluster = &allClusters[i]
+		case config.RoleWorker:
+			workerClusters = append(workerClusters, &allClusters[i])
+		default:
+			standaloneClusters = append(standaloneClusters, &allClusters[i])
 		}
-		// Track created cluster for cleanup on error
-		createdClusters = append(createdClusters, kindClusterName)
+	}
 
-		// Install Kwok
-		if err := kwok.Install(ctx, kubeconfigPath, kwokVersion); err != nil {
-			return nil, fmt.Errorf("failed to install Kwok in cluster '%s': %w", clusterName, err)
+	// Create worker clusters first (with Kueue objects)
+	for _, clusterCfg := range workerClusters {
+		if err := t.createCluster(ctx, clusterCfg, topologyDir, kwokVersion, kueueVersion, kueueHelmValues, &createdClusters); err != nil {
+			return nil, err
+		}
+	}
+
+	// Create standalone clusters
+	for _, clusterCfg := range standaloneClusters {
+		if err := t.createCluster(ctx, clusterCfg, topologyDir, kwokVersion, kueueVersion, kueueHelmValues, &createdClusters); err != nil {
+			return nil, err
+		}
+	}
+
+	// Create management cluster (if exists)
+	if managementCluster != nil {
+		// Create cluster infrastructure (kind + Kwok + Kueue + extensions install, but no Kueue objects yet)
+		kubeconfigPath, err := t.createClusterInfrastructure(ctx, managementCluster, topologyDir, kwokVersion, kueueVersion, kueueHelmValues, &createdClusters)
+		if err != nil {
+			return nil, err
 		}
 
-		// Create Kwok nodes
-		if err := kwok.CreateNodes(ctx, kubeconfigPath, clusterCfg.NodePools); err != nil {
-			return nil, fmt.Errorf("failed to create nodes in cluster '%s': %w", clusterName, err)
+		// Create Kueue client for management cluster (used for MultiKueue setup and object provisioning)
+		kueueClient, err := kueue.NewClient(kubeconfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Kueue client for management cluster: %w", err)
 		}
 
-		// Install Kueue
-		if err := kueue.Install(ctx, kubeconfigPath, kueueVersion, kueueImageRepository, kueueImageTag); err != nil {
-			return nil, fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterName, err)
-		}
+		// Setup MultiKueue infrastructure (if WorkerSets exist)
+		if len(cfg.Spec.WorkerSets) > 0 {
+			// Get internal kubeconfigs for inter-cluster connectivity
+			// (default kubeconfigs use 127.0.0.1 which is unreachable from other kind containers)
+			workerKubeconfigs := make(map[string][]byte, len(workerClusters))
+			for _, worker := range workerClusters {
+				kindClusterName := t.getKindClusterName(worker.Name)
+				kubeconfigData, err := cluster.GetKubeconfig(kindClusterName, true)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get internal kubeconfig for worker %q: %w", worker.Name, err)
+				}
+				workerKubeconfigs[worker.Name] = kubeconfigData
+			}
 
-		// Install extensions (after Kueue, before Kueue objects)
-		if len(clusterCfg.Extensions) > 0 {
-			if err := extensions.InstallExtensions(ctx, kubeconfigPath, clusterCfg.Extensions); err != nil {
-				return nil, fmt.Errorf("failed to install extensions in cluster '%s': %w", clusterName, err)
+			// Create MultiKueue infrastructure (Secrets, MultiKueueClusters, MultiKueueConfigs, AdmissionChecks)
+			if err := kueue.SetupMultiKueueInfrastructure(ctx, kueueClient, cfg.Spec.WorkerSets, workerKubeconfigs); err != nil {
+				return nil, fmt.Errorf("failed to setup MultiKueue infrastructure: %w", err)
 			}
 		}
 
-		// Provision Kueue objects (if specified)
-		if clusterCfg.Kueue != nil {
-			kueueClient, err := kueue.NewClient(kubeconfigPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create Kueue client for cluster '%s': %w", clusterName, err)
-			}
+		// Derive management Kueue objects from WorkerSets + user-defined config
+		derivedConfig := config.DeriveManagementKueueConfig(cfg.Spec.WorkerSets, expandedWorkers, managementCluster.Kueue)
 
-			if err := kueue.ProvisionKueueObjects(ctx, kueueClient, clusterCfg.Kueue); err != nil {
-				return nil, fmt.Errorf("failed to provision Kueue objects in cluster '%s': %w", clusterName, err)
+		// Provision management Kueue objects
+		if derivedConfig != nil {
+			if err := kueue.ProvisionKueueObjects(ctx, kueueClient, derivedConfig); err != nil {
+				return nil, fmt.Errorf("failed to provision Kueue objects in management cluster: %w", err)
 			}
-		}
-
-		// Add cluster to metadata
-		t.metadata.Clusters[clusterName] = Cluster{
-			Name:            clusterName,
-			KindClusterName: kindClusterName,
-			KubeconfigPath:  kubeconfigPath,
-			CreatedAt:       time.Now(),
 		}
 	}
 
@@ -148,6 +175,74 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (t *Topology
 	}
 
 	return t, nil
+}
+
+// createCluster creates a complete cluster with all components (infrastructure + Kueue objects)
+func (t *Topology) createCluster(ctx context.Context, clusterCfg *config.ClusterConfig, topologyDir, kwokVersion, kueueVersion string, kueueHelmValues map[string]interface{}, createdClusters *[]string) error {
+	kubeconfigPath, err := t.createClusterInfrastructure(ctx, clusterCfg, topologyDir, kwokVersion, kueueVersion, kueueHelmValues, createdClusters)
+	if err != nil {
+		return err
+	}
+
+	// Provision Kueue objects (if specified)
+	if clusterCfg.Kueue != nil {
+		kueueClient, err := kueue.NewClient(kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to create Kueue client for cluster '%s': %w", clusterCfg.Name, err)
+		}
+
+		if err := kueue.ProvisionKueueObjects(ctx, kueueClient, clusterCfg.Kueue); err != nil {
+			return fmt.Errorf("failed to provision Kueue objects in cluster '%s': %w", clusterCfg.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// createClusterInfrastructure creates cluster infrastructure (kind + Kwok + Kueue install) without Kueue objects
+func (t *Topology) createClusterInfrastructure(ctx context.Context, clusterCfg *config.ClusterConfig, topologyDir, kwokVersion, kueueVersion string, kueueHelmValues map[string]interface{}, createdClusters *[]string) (string, error) {
+	clusterName := clusterCfg.Name
+	kindClusterName := t.getKindClusterName(clusterName)
+	kubeconfigPath := filepath.Join(topologyDir, fmt.Sprintf("%s.kubeconfig", clusterName))
+
+	// Create kind cluster
+	if err := cluster.CreateCluster(ctx, kindClusterName, clusterCfg, kubeconfigPath); err != nil {
+		return "", fmt.Errorf("failed to create cluster '%s': %w", clusterName, err)
+	}
+	// Track created cluster for cleanup on error
+	*createdClusters = append(*createdClusters, kindClusterName)
+
+	// Install Kwok
+	if err := kwok.Install(ctx, kubeconfigPath, kwokVersion); err != nil {
+		return "", fmt.Errorf("failed to install Kwok in cluster '%s': %w", clusterName, err)
+	}
+
+	// Create Kwok nodes
+	if err := kwok.CreateNodes(ctx, kubeconfigPath, clusterCfg.NodePools); err != nil {
+		return "", fmt.Errorf("failed to create nodes in cluster '%s': %w", clusterName, err)
+	}
+
+	// Install Kueue
+	if err := kueue.Install(ctx, kubeconfigPath, kueueVersion, kueueHelmValues); err != nil {
+		return "", fmt.Errorf("failed to install Kueue in cluster '%s': %w", clusterName, err)
+	}
+
+	// Install extensions (after Kueue install, before Kueue objects)
+	if len(clusterCfg.Extensions) > 0 {
+		if err := extensions.InstallExtensions(ctx, kubeconfigPath, clusterCfg.Extensions); err != nil {
+			return "", fmt.Errorf("failed to install extensions in cluster '%s': %w", clusterName, err)
+		}
+	}
+
+	// Add cluster to metadata
+	t.metadata.Clusters[clusterName] = Cluster{
+		Name:            clusterName,
+		KindClusterName: kindClusterName,
+		KubeconfigPath:  kubeconfigPath,
+		CreatedAt:       time.Now(),
+	}
+
+	return kubeconfigPath, nil
 }
 
 // Load loads an existing topology from disk

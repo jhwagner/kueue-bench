@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/yaml"
 )
 
 // TODO: Refactor to use Helm Go SDK instead of shelling out to helm CLI.
@@ -32,7 +33,7 @@ const (
 )
 
 // Install installs Kueue into the cluster via Helm
-func Install(ctx context.Context, kubeconfigPath string, version string, imageRepository string, imageTag string) error {
+func Install(ctx context.Context, kubeconfigPath string, version string, helmValues map[string]interface{}) error {
 	if version == "" {
 		version = DefaultKueueVersion
 	}
@@ -45,7 +46,7 @@ func Install(ctx context.Context, kubeconfigPath string, version string, imageRe
 	}
 
 	// Install Kueue via Helm
-	if err := installKueueChart(ctx, kubeconfigPath, version, imageRepository, imageTag); err != nil {
+	if err := installKueueChart(ctx, kubeconfigPath, version, helmValues); err != nil {
 		return fmt.Errorf("failed to install Kueue chart: %w", err)
 	}
 
@@ -69,7 +70,7 @@ func checkHelmInstalled() error {
 }
 
 // installKueueChart installs the Kueue Helm chart
-func installKueueChart(ctx context.Context, kubeconfigPath string, version string, imageRepository string, imageTag string) error {
+func installKueueChart(ctx context.Context, kubeconfigPath string, version string, helmValues map[string]interface{}) error {
 	args := []string{
 		"install", kueueReleaseName, kueueHelmRegistryURL,
 		"--version", version,
@@ -80,15 +81,29 @@ func installKueueChart(ctx context.Context, kubeconfigPath string, version strin
 		"--timeout", "5m",
 	}
 
-	fmt.Println("executing command:", args)
-	// Add custom image repository if specified
-	if imageRepository != "" {
-		args = append(args, "--set", fmt.Sprintf("controllerManager.manager.image.repository=%s", imageRepository))
-	}
+	// If helmValues are provided, write them to a temp file and pass via --values
+	var valuesFile string
+	if len(helmValues) > 0 {
+		tmpFile, err := os.CreateTemp("", "kueue-values-*.yaml")
+		if err != nil {
+			return fmt.Errorf("failed to create temp values file: %w", err)
+		}
+		valuesFile = tmpFile.Name()
+		defer os.Remove(valuesFile)
 
-	// Add custom image tag if specified
-	if imageTag != "" {
-		args = append(args, "--set", fmt.Sprintf("controllerManager.manager.image.tag=%s", imageTag))
+		// Marshal helmValues to YAML
+		data, err := yaml.Marshal(helmValues)
+		if err != nil {
+			return fmt.Errorf("failed to marshal helm values: %w", err)
+		}
+
+		if _, err := tmpFile.Write(data); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("failed to write helm values: %w", err)
+		}
+		tmpFile.Close()
+
+		args = append(args, "--values", valuesFile)
 	}
 
 	cmd := exec.CommandContext(ctx, "helm", args...)
