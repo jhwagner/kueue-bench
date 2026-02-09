@@ -22,9 +22,8 @@ const (
 	// Default Kwok version
 	DefaultKwokVersion = "v0.7.0"
 
-	// Kwok manifest URLs
-	kwokManifestURLTemplate      = "https://github.com/kubernetes-sigs/kwok/releases/download/%s/kwok.yaml"
-	kwokStageManifestURLTemplate = "https://github.com/kubernetes-sigs/kwok/releases/download/%s/stage-fast.yaml"
+	// Kwok controller manifest URL
+	kwokManifestURLTemplate = "https://github.com/kubernetes-sigs/kwok/releases/download/%s/kwok.yaml"
 )
 
 // Install installs Kwok into the cluster
@@ -72,9 +71,8 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 	// Reset discovery cache so mapper can discover newly created Stage CRD
 	mapper.Reset()
 
-	// Apply Kwok stage manifest for pod lifecycle
-	stageURL := fmt.Sprintf(kwokStageManifestURLTemplate, version)
-	if err := manifest.ApplyURL(ctx, dynamicClient, mapper, stageURL); err != nil {
+	// Apply embedded Kwok stages for node lifecycle and pod completion
+	if err := installStages(ctx, dynamicClient, mapper); err != nil {
 		return fmt.Errorf("failed to install Kwok stages: %w", err)
 	}
 

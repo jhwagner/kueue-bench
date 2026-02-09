@@ -3,6 +3,7 @@ package manifest
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,34 @@ func ApplyURL(ctx context.Context, client dynamic.Interface,
 	if err != nil {
 		return fmt.Errorf("failed to fetch manifest: %w", err)
 	}
+
+	return applyDocuments(ctx, client, mapper, documents, mutators...)
+}
+
+// ApplyBytes applies YAML manifests from raw bytes.
+// The data may contain multiple YAML documents separated by "---".
+// Optional mutators are called on each object before it is applied.
+func ApplyBytes(ctx context.Context, client dynamic.Interface,
+	mapper *restmapper.DeferredDiscoveryRESTMapper, data []byte,
+	mutators ...func(*unstructured.Unstructured)) error {
+
+	parts := strings.Split(string(data), "\n---\n")
+	var documents [][]byte
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		documents = append(documents, []byte(trimmed))
+	}
+
+	return applyDocuments(ctx, client, mapper, documents, mutators...)
+}
+
+// applyDocuments decodes and applies a slice of YAML documents.
+func applyDocuments(ctx context.Context, client dynamic.Interface,
+	mapper *restmapper.DeferredDiscoveryRESTMapper, documents [][]byte,
+	mutators ...func(*unstructured.Unstructured)) error {
 
 	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 
