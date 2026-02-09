@@ -114,8 +114,10 @@ This will place the binary at `./bin/kueue-bench`.
 
 See the `examples/` directory:
 
-- `single-cluster-simple.yaml` - Basic single cluster setup
-- `single-cluster-gpu.yaml` - Multi-pool setup with CPU and GPU nodes
+- `single-cluster.yaml` — Basic single cluster setup
+- `single-cluster-gpu.yaml` — Multi-pool setup with CPU and GPU nodes
+- `single-cluster-with-extensions.yaml` — Installing additional components (e.g. JobSet) via Helm
+- `multikueue.yaml` — MultiKueue topology with WorkerSets and automatic quota derivation
 
 ## Configuration
 
