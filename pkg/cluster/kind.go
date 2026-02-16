@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
@@ -12,9 +13,18 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster"
 )
 
-// getProvider returns a kind cluster provider
+var (
+	provider     *cluster.Provider
+	providerOnce sync.Once
+)
+
+// getProvider returns a shared kind cluster provider.
+// A single provider is reused to avoid accumulating Docker client connections.
 func getProvider() *cluster.Provider {
-	return cluster.NewProvider()
+	providerOnce.Do(func() {
+		provider = cluster.NewProvider()
+	})
+	return provider
 }
 
 // CreateCluster creates a new kind cluster
