@@ -7,11 +7,11 @@ import (
 
 	"github.com/jhwagner/kueue-bench/pkg/helm"
 
-	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	kueuev1beta1 "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	kueueclientset "sigs.k8s.io/kueue/client-go/clientset/versioned"
 )
 
 const (
@@ -21,9 +21,8 @@ const (
 	// Kueue Helm OCI registry configuration
 	kueueHelmRegistryURL = "oci://registry.k8s.io/kueue/charts/kueue"
 
-	// Kueue deployment details
+	// Kueue installation details
 	kueueNamespace   = "kueue-system"
-	kueueDeployment  = "kueue-controller-manager"
 	kueueReleaseName = "kueue"
 )
 
@@ -40,10 +39,11 @@ func Install(ctx context.Context, kubeconfigPath string, version string, helmVal
 		return fmt.Errorf("failed to install Kueue chart: %w", err)
 	}
 
-	// Wait for Kueue controller to be ready
-	fmt.Println("Waiting for Kueue controller to be ready...")
-	if err := waitForKueueDeployment(ctx, kubeconfigPath); err != nil {
-		return fmt.Errorf("Kueue controller failed to become ready: %w", err)
+	// Wait for the webhook to be serving before returning, otherwise callers
+	// creating Kueue objects may hit "connection refused" on the webhook
+	fmt.Println("Waiting for Kueue webhook to be ready...")
+	if err := waitForWebhookReady(ctx, kubeconfigPath); err != nil {
+		return fmt.Errorf("Kueue webhook failed to become ready: %w", err)
 	}
 
 	fmt.Println("✓ Kueue installed successfully")
@@ -65,33 +65,27 @@ func installKueueChart(ctx context.Context, kubeconfigPath string, version strin
 	})
 }
 
-// waitForKueueDeployment waits for the Kueue controller deployment to be ready
-func waitForKueueDeployment(ctx context.Context, kubeconfigPath string) error {
-	// Create Kubernetes client
+// waitForWebhookReady probes the Kueue webhook by performing a dry-run create of a
+// ResourceFlavor. This exercises the full webhook path (API server → Service routing →
+// Pod → webhook handler) and only succeeds when the webhook is truly serving.
+func waitForWebhookReady(ctx context.Context, kubeconfigPath string) error {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to load kubeconfig: %w", err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(config)
+	client, err := kueueclientset.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
+		return fmt.Errorf("failed to create Kueue clientset: %w", err)
 	}
 
-	// Wait for deployment to be ready
+	probe := &kueuev1beta1.ResourceFlavor{
+		ObjectMeta: metav1.ObjectMeta{Name: "webhook-probe"},
+	}
+	dryRun := metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}
+
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, 180*time.Second, true, func(ctx context.Context) (bool, error) {
-		deployment, err := clientset.AppsV1().Deployments(kueueNamespace).Get(ctx, kueueDeployment, metav1.GetOptions{})
-		if err != nil {
-			return false, nil // Keep waiting
-		}
-
-		// Check if deployment is available
-		for _, condition := range deployment.Status.Conditions {
-			if condition.Type == appsv1.DeploymentAvailable && condition.Status == "True" {
-				return true, nil
-			}
-		}
-
-		return false, nil
+		_, err := client.KueueV1beta1().ResourceFlavors().Create(ctx, probe, dryRun)
+		return err == nil, nil
 	})
 }
