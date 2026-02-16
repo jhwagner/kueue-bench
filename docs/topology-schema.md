@@ -29,7 +29,7 @@ spec:
       kueue: {...}
 ```
 
-See the `examples/` directory for complete working examples.
+See the `examples/topologies/` directory for complete working examples.
 
 ---
 

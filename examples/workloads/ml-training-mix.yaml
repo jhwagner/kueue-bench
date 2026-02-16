@@ -1,0 +1,58 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: ml-training-mix
+spec:
+  seed: 12345
+  duration: 30m
+  arrivalPattern:
+    type: poisson
+    ratePerMinute: 20
+
+  workloads:
+    # Standard GPU training jobs — most common workload
+    - type: Job
+      weight: 60
+      localQueue: team-a-lq
+      namespace: team-a
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "1", max: "4" }
+            cpu: "16"
+            memory: "64Gi"
+        duration: { distribution: lognormal, mean: "20m", stddev: "10m" }
+
+    # Distributed training with gang scheduling
+    - type: JobSet
+      weight: 30
+      localQueue: team-a-lq
+      namespace: team-a
+      template:
+        replicatedJobs:
+          - name: workers
+            replicas: { distribution: choice, values: ["2", "4", "8"] }
+            resources:
+              requests:
+                nvidia.com/gpu: "8"
+                cpu: "32"
+                memory: "128Gi"
+        duration: { distribution: uniform, min: "1h", max: "4h" }
+
+    # Ray-based ML jobs
+    - type: RayJob
+      weight: 10
+      localQueue: team-a-lq
+      namespace: team-a
+      template:
+        headResources:
+          requests:
+            cpu: "4"
+            memory: "16Gi"
+        workerReplicas: { distribution: uniform, min: "2", max: "16" }
+        workerResources:
+          requests:
+            nvidia.com/gpu: "1"
+            cpu: "8"
+            memory: "32Gi"
+        duration: { distribution: uniform, min: "30m", max: "2h" }

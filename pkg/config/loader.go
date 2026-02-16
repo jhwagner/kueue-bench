@@ -7,17 +7,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadTopology loads and parses a topology configuration file
-func LoadTopology(filepath string) (*Topology, error) {
-	data, err := os.ReadFile(filepath) //nolint:gosec // filepath is user-provided CLI input, not untrusted
+// loadYAML reads a YAML file and unmarshals it into a value of type T.
+func loadYAML[T any](path, typeName string) (*T, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // filepath is user-provided CLI input, not untrusted
 	if err != nil {
-		return nil, fmt.Errorf("failed to read topology file: %w", err)
+		return nil, fmt.Errorf("failed to read %s file: %w", typeName, err)
 	}
 
-	var topology Topology
-	if err := yaml.Unmarshal(data, &topology); err != nil {
-		return nil, fmt.Errorf("failed to parse topology YAML: %w", err)
+	var result T
+	if err := yaml.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse %s YAML: %w", typeName, err)
 	}
 
-	return &topology, nil
+	return &result, nil
+}
+
+// LoadTopology loads and parses a topology configuration file
+func LoadTopology(path string) (*Topology, error) {
+	return loadYAML[Topology](path, "topology")
+}
+
+// LoadWorkloadProfile loads and parses a workload profile configuration file
+func LoadWorkloadProfile(path string) (*WorkloadProfile, error) {
+	return loadYAML[WorkloadProfile](path, "workload profile")
 }

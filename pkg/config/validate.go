@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	APIVersion   = "kueue-bench.io/v1alpha1"
-	KindTopology = "Topology"
+	APIVersion          = "kueue-bench.io/v1alpha1"
+	KindTopology        = "Topology"
+	KindWorkloadProfile = "WorkloadProfile"
 
 	RoleStandalone = "standalone"
 	RoleManagement = "management"

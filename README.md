@@ -21,7 +21,7 @@ Use one of the example configurations:
 
 ```bash
 kueue-bench topology create single-cluster \
-  --file examples/single-cluster.yaml
+  --file examples/topologies/single-cluster.yaml
 ```
 
 This creates a single kind cluster with:
@@ -110,12 +110,16 @@ This will place the binary at `./bin/kueue-bench`.
 
 ## Examples
 
-See the `examples/` directory:
+See the `examples/` directory for topology and workload configurations:
 
+**Topologies** (`examples/topologies/`):
 - `single-cluster.yaml` — Basic single cluster setup
 - `single-cluster-gpu.yaml` — Multi-pool setup with CPU and GPU nodes
 - `single-cluster-with-extensions.yaml` — Installing additional components (e.g. JobSet) via Helm
 - `multikueue.yaml` — MultiKueue topology with WorkerSets and automatic quota derivation
+
+**Workload Profiles** (`examples/workloads/`):
+- `ml-training-mix.yaml` — Mixed ML training workloads with Poisson arrival pattern
 
 ## Configuration
 
@@ -145,7 +149,9 @@ kueue-bench/
 │   ├── kwok/           # Kwok installation and nodes
 │   ├── kueue/          # Kueue installation and resources
 │   └── topology/       # Topology orchestration
-├── examples/           # Example topology files
+├── examples/           # Example topology and workload files
+│   ├── topologies/     # Topology configuration examples
+│   └── workloads/      # Workload profile examples
 └── docs/               # Documentation
 ```
 
