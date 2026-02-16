@@ -4,65 +4,44 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
-	"gopkg.in/yaml.v3"
+	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
+	"sigs.k8s.io/kind/pkg/cluster"
 )
 
-// TODO: Refactor to use kubernetes-sigs/e2e-framework or sigs.k8s.io/kind library
-// instead of shelling out to kind CLI. This will provide better type safety,
-// error handling, and eliminate the external dependency on the kind binary.
-
-// kindClusterConfig represents a kind cluster configuration
-type kindClusterConfig struct {
-	Kind       string     `yaml:"kind"`
-	APIVersion string     `yaml:"apiVersion"`
-	Nodes      []kindNode `yaml:"nodes"`
-}
-
-type kindNode struct {
-	Role string `yaml:"role"`
+// getProvider returns a kind cluster provider
+func getProvider() *cluster.Provider {
+	return cluster.NewProvider()
 }
 
 // CreateCluster creates a new kind cluster
 func CreateCluster(ctx context.Context, name string, cfg *config.ClusterConfig, kubeconfigPath string) error {
-	// Check if kind is installed
-	if err := checkKindInstalled(); err != nil {
-		return err
-	}
+	provider := getProvider()
 
 	// Check if cluster already exists
-	exists, err := clusterExists(name)
+	clusters, err := provider.List()
 	if err != nil {
-		return fmt.Errorf("failed to check if cluster exists: %w", err)
+		return fmt.Errorf("failed to list clusters: %w", err)
 	}
-	if exists {
-		return fmt.Errorf("cluster '%s' already exists", name)
+	for _, c := range clusters {
+		if c == name {
+			return fmt.Errorf("cluster '%s' already exists", name)
+		}
 	}
 
 	// Generate kind config
 	kindConfig := generateKindConfig(cfg)
 
-	// Write config to temp file
-	configFile, err := writeTempKindConfig(kindConfig)
-	if err != nil {
-		return fmt.Errorf("failed to write kind config: %w", err)
-	}
-	defer os.Remove(configFile)
-
 	// Create cluster
 	fmt.Printf("Creating kind cluster '%s'...\n", name)
-	cmd := exec.CommandContext(ctx, "kind", "create", "cluster",
-		"--name", name,
-		"--config", configFile,
-		"--wait", "2m")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := provider.Create(
+		name,
+		cluster.CreateWithV1Alpha4Config(kindConfig),
+		cluster.CreateWithWaitForReady(2*time.Minute),
+	); err != nil {
 		return fmt.Errorf("failed to create kind cluster: %w", err)
 	}
 
@@ -77,15 +56,19 @@ func CreateCluster(ctx context.Context, name string, cfg *config.ClusterConfig, 
 
 // DeleteCluster deletes a kind cluster
 func DeleteCluster(ctx context.Context, name string) error {
-	// Check if kind is installed
-	if err := checkKindInstalled(); err != nil {
-		return err
-	}
+	provider := getProvider()
 
 	// Check if cluster exists
-	exists, err := clusterExists(name)
+	clusters, err := provider.List()
 	if err != nil {
-		return fmt.Errorf("failed to check if cluster exists: %w", err)
+		return fmt.Errorf("failed to list clusters: %w", err)
+	}
+	exists := false
+	for _, c := range clusters {
+		if c == name {
+			exists = true
+			break
+		}
 	}
 	if !exists {
 		return fmt.Errorf("cluster '%s' does not exist", name)
@@ -93,11 +76,7 @@ func DeleteCluster(ctx context.Context, name string) error {
 
 	// Delete cluster
 	fmt.Printf("Deleting kind cluster '%s'...\n", name)
-	cmd := exec.CommandContext(ctx, "kind", "delete", "cluster", "--name", name)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := provider.Delete(name, ""); err != nil {
 		return fmt.Errorf("failed to delete kind cluster: %w", err)
 	}
 
@@ -107,74 +86,14 @@ func DeleteCluster(ctx context.Context, name string) error {
 
 // Helper functions
 
-func checkKindInstalled() error {
-	_, err := exec.LookPath("kind")
-	if err != nil {
-		return fmt.Errorf("kind is not installed or not in PATH: %w", err)
-	}
-	return nil
-}
-
-func clusterExists(name string) (bool, error) {
-	cmd := exec.Command("kind", "get", "clusters")
-	output, err := cmd.Output()
-	if err != nil {
-		// kind returns error if no clusters exist, which is fine
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Check if it's just "no clusters found" case
-			if len(output) == 0 {
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to list kind clusters: %w (stderr: %s)", err, string(exitErr.Stderr))
-		}
-		return false, fmt.Errorf("failed to list kind clusters: %w", err)
-	}
-
-	// Handle empty output (no clusters)
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" {
-		return false, nil
-	}
-
-	clusters := strings.Split(trimmed, "\n")
-	for _, cluster := range clusters {
-		if cluster == name {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func generateKindConfig(cfg *config.ClusterConfig) *kindClusterConfig {
-	kindCfg := &kindClusterConfig{
-		Kind:       "Cluster",
-		APIVersion: "kind.x-k8s.io/v1alpha4",
-		Nodes: []kindNode{
-			{Role: "control-plane"},
+func generateKindConfig(cfg *config.ClusterConfig) *v1alpha4.Cluster {
+	kindCfg := &v1alpha4.Cluster{
+		Nodes: []v1alpha4.Node{
+			{Role: v1alpha4.ControlPlaneRole},
 		},
 	}
 
 	return kindCfg
-}
-
-func writeTempKindConfig(cfg *kindClusterConfig) (string, error) {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal kind config: %w", err)
-	}
-
-	tmpFile, err := os.CreateTemp("", "kind-config-*.yaml")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer tmpFile.Close()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("failed to write kind config: %w", err)
-	}
-
-	return tmpFile.Name(), nil
 }
 
 // ExportKubeconfig exports a kubeconfig for the given kind cluster to a file.
@@ -200,14 +119,10 @@ func ExportKubeconfig(name string, kubeconfigPath string) error {
 // When internal is true, uses the cluster's Docker network address instead of 127.0.0.1,
 // which is needed for inter-cluster connectivity (e.g. MultiKueue management to worker).
 func GetKubeconfig(name string, internal bool) ([]byte, error) {
-	args := []string{"get", "kubeconfig", "--name", name}
-	if internal {
-		args = append(args, "--internal")
-	}
-	cmd := exec.Command("kind", args...)
-	output, err := cmd.Output()
+	provider := getProvider()
+	kubeconfig, err := provider.KubeConfig(name, internal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
-	return output, nil
+	return []byte(kubeconfig), nil
 }
