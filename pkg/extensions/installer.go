@@ -3,30 +3,16 @@ package extensions
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"sort"
+	"time"
 
 	"github.com/jhwagner/kueue-bench/pkg/config"
+	"github.com/jhwagner/kueue-bench/pkg/helm"
 	"github.com/jhwagner/kueue-bench/pkg/manifest"
+	"k8s.io/utils/ptr"
 )
 
 // InstallExtensions installs all Helm chart or manifest extensions for a cluster
 func InstallExtensions(ctx context.Context, kubeconfigPath string, extensions []config.Extension) error {
-	// If any extensions require Helm, check that Helm is installed
-	hasHelm := false
-	for _, ext := range extensions {
-		if ext.Helm != nil {
-			hasHelm = true
-			break
-		}
-	}
-	if hasHelm {
-		if err := checkHelmInstalled(); err != nil {
-			return err
-		}
-	}
-
 	for _, ext := range extensions {
 		switch {
 		case ext.Helm != nil:
@@ -42,17 +28,55 @@ func InstallExtensions(ctx context.Context, kubeconfigPath string, extensions []
 	return nil
 }
 
-func installHelmExtension(ctx context.Context, kubeconfigPath, name string, helm *config.HelmExtension) error {
-	fmt.Printf("Installing extension '%s' (helm: %s)...\n", name, helm.Chart)
+func installHelmExtension(ctx context.Context, kubeconfigPath, name string, helmExt *config.HelmExtension) error {
+	fmt.Printf("Installing extension '%s' (helm: %s)...\n", name, helmExt.Chart)
 
-	args := buildHelmArgs(kubeconfigPath, name, helm)
+	// Determine release name (use extension name if not specified)
+	releaseName := helmExt.ReleaseName
+	if releaseName == "" {
+		releaseName = name
+	}
 
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Determine namespace (default to "default" if not specified)
+	namespace := helmExt.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("helm install failed: %w", err)
+	// Parse timeout with better error handling
+	timeout := 5 * time.Minute
+	if helmExt.Timeout != "" {
+		parsed, err := time.ParseDuration(helmExt.Timeout)
+		if err != nil {
+			fmt.Printf("Warning: invalid timeout '%s', using default 5m: %v\n", helmExt.Timeout, err)
+		} else {
+			timeout = parsed
+		}
+	}
+
+	// Parse --set values using strvals to support dot notation (e.g. "foo.bar=baz")
+	var values map[string]interface{}
+	if len(helmExt.Set) > 0 {
+		var err error
+		values, err = helm.ParseSetValues(helmExt.Set)
+		if err != nil {
+			return fmt.Errorf("failed to parse values: %w", err)
+		}
+	}
+
+	// Install the chart
+	if err := helm.Install(ctx, helm.InstallOptions{
+		KubeconfigPath:  kubeconfigPath,
+		Namespace:       namespace,
+		ReleaseName:     releaseName,
+		ChartRef:        helmExt.Chart,
+		Version:         helmExt.Version,
+		Values:          values,
+		CreateNamespace: ptr.Deref(helmExt.CreateNamespace, true),
+		Wait:            ptr.Deref(helmExt.Wait, true),
+		Timeout:         timeout,
+	}); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Extension '%s' installed successfully\n", name)
@@ -67,62 +91,5 @@ func installManifestExtension(ctx context.Context, kubeconfigPath, name string, 
 	}
 
 	fmt.Printf("✓ Extension '%s' installed successfully\n", name)
-	return nil
-}
-
-func buildHelmArgs(kubeconfigPath, name string, helm *config.HelmExtension) []string {
-	releaseName := name
-	if helm.ReleaseName != "" {
-		releaseName = helm.ReleaseName
-	}
-
-	args := []string{"install", releaseName, helm.Chart}
-
-	if helm.Version != "" {
-		args = append(args, "--version", helm.Version)
-	}
-
-	if helm.Namespace != "" {
-		args = append(args, "--namespace", helm.Namespace)
-	}
-
-	// Default: createNamespace = true
-	if helm.CreateNamespace == nil || *helm.CreateNamespace {
-		args = append(args, "--create-namespace")
-	}
-
-	args = append(args, "--kubeconfig", kubeconfigPath)
-
-	// Default: wait = true
-	if helm.Wait == nil || *helm.Wait {
-		args = append(args, "--wait")
-	}
-
-	timeout := "5m"
-	if helm.Timeout != "" {
-		timeout = helm.Timeout
-	}
-	args = append(args, "--timeout", timeout)
-
-	// Sort set keys for deterministic output
-	if len(helm.Set) > 0 {
-		keys := make([]string, 0, len(helm.Set))
-		for k := range helm.Set {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			args = append(args, "--set", fmt.Sprintf("%s=%s", k, helm.Set[k]))
-		}
-	}
-
-	return args
-}
-
-func checkHelmInstalled() error {
-	_, err := exec.LookPath("helm")
-	if err != nil {
-		return fmt.Errorf("helm is not installed or not in PATH: %w", err)
-	}
 	return nil
 }

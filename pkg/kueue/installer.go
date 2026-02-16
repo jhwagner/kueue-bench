@@ -3,21 +3,16 @@ package kueue
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"time"
+
+	"github.com/jhwagner/kueue-bench/pkg/helm"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/yaml"
 )
-
-// TODO: Refactor to use Helm Go SDK instead of shelling out to helm CLI.
-// This will provide better type safety, error handling, and eliminate the
-// external dependency on the helm binary.
 
 const (
 	// DefaultKueueVersion is the default Kueue version to install
@@ -40,11 +35,6 @@ func Install(ctx context.Context, kubeconfigPath string, version string, helmVal
 
 	fmt.Printf("Installing Kueue %s...\n", version)
 
-	// Check if helm is installed
-	if err := checkHelmInstalled(); err != nil {
-		return err
-	}
-
 	// Install Kueue via Helm
 	if err := installKueueChart(ctx, kubeconfigPath, version, helmValues); err != nil {
 		return fmt.Errorf("failed to install Kueue chart: %w", err)
@@ -60,61 +50,19 @@ func Install(ctx context.Context, kubeconfigPath string, version string, helmVal
 	return nil
 }
 
-// checkHelmInstalled verifies that helm is available in PATH
-func checkHelmInstalled() error {
-	_, err := exec.LookPath("helm")
-	if err != nil {
-		return fmt.Errorf("helm is not installed or not in PATH: %w", err)
-	}
-	return nil
-}
-
-// installKueueChart installs the Kueue Helm chart
+// installKueueChart installs the Kueue Helm chart using the Helm SDK
 func installKueueChart(ctx context.Context, kubeconfigPath string, version string, helmValues map[string]interface{}) error {
-	args := []string{
-		"install", kueueReleaseName, kueueHelmRegistryURL,
-		"--version", version,
-		"--namespace", kueueNamespace,
-		"--create-namespace",
-		"--kubeconfig", kubeconfigPath,
-		"--wait",
-		"--timeout", "5m",
-	}
-
-	// If helmValues are provided, write them to a temp file and pass via --values
-	var valuesFile string
-	if len(helmValues) > 0 {
-		tmpFile, err := os.CreateTemp("", "kueue-values-*.yaml")
-		if err != nil {
-			return fmt.Errorf("failed to create temp values file: %w", err)
-		}
-		valuesFile = tmpFile.Name()
-		defer os.Remove(valuesFile)
-
-		// Marshal helmValues to YAML
-		data, err := yaml.Marshal(helmValues)
-		if err != nil {
-			return fmt.Errorf("failed to marshal helm values: %w", err)
-		}
-
-		if _, err := tmpFile.Write(data); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("failed to write helm values: %w", err)
-		}
-		tmpFile.Close()
-
-		args = append(args, "--values", valuesFile)
-	}
-
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to install Kueue Helm chart: %w", err)
-	}
-
-	return nil
+	return helm.Install(ctx, helm.InstallOptions{
+		KubeconfigPath:  kubeconfigPath,
+		Namespace:       kueueNamespace,
+		ReleaseName:     kueueReleaseName,
+		ChartRef:        kueueHelmRegistryURL,
+		Version:         version,
+		Values:          helmValues,
+		CreateNamespace: true,
+		Wait:            true,
+		Timeout:         5 * time.Minute,
+	})
 }
 
 // waitForKueueDeployment waits for the Kueue controller deployment to be ready
