@@ -10,11 +10,11 @@ import (
 // FetchYAMLDocuments fetches YAML content from a URL and splits it into separate documents
 func FetchYAMLDocuments(url string) ([][]byte, error) {
 	// Fetch content
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec // URL is from trusted internal config (Kwok manifest URLs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch from %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)

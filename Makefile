@@ -1,8 +1,9 @@
-.PHONY: build test clean install fmt vet integration-test
+.PHONY: build test clean install fmt vet lint integration-test
 
 BINARY_NAME := kueue-bench
 BUILD_DIR := bin
 GO ?= go
+GOLANGCI_LINT ?= golangci-lint
 
 build:
 	@echo "Building $(BINARY_NAME)..."
@@ -29,6 +30,10 @@ fmt:
 	@echo "Running go fmt..."
 	$(GO) fmt ./...
 
+lint:
+	@echo "Running golangci-lint..."
+	$(GOLANGCI_LINT) run ./...
+
 clean:
 	@echo "Cleaning..."
 	rm -rf $(BUILD_DIR)
@@ -41,5 +46,5 @@ deps:
 	$(GO) mod tidy
 
 .PHONY: verify
-verify: fmt vet test
+verify: fmt lint test
 	@echo "Verification complete!"

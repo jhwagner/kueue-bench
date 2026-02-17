@@ -43,7 +43,7 @@ func Create(ctx context.Context, name string, cfg *config.Topology) (t *Topology
 	}
 
 	// Create topology directory
-	if err := os.MkdirAll(topologyDir, 0755); err != nil {
+	if err := os.MkdirAll(topologyDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create topology directory: %w", err)
 	}
 
@@ -253,7 +253,7 @@ func Load(name string) (*Topology, error) {
 	}
 
 	metadataPath := filepath.Join(topologyDir, metadataFilename)
-	data, err := os.ReadFile(metadataPath)
+	data, err := os.ReadFile(metadataPath) //nolint:gosec // path is constructed from known base directory
 	if err != nil {
 		return nil, fmt.Errorf("failed to read metadata: %w", err)
 	}
@@ -347,7 +347,7 @@ func (t *Topology) save() error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+	if err := os.WriteFile(metadataPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write metadata: %w", err)
 	}
 

@@ -43,7 +43,7 @@ func Install(ctx context.Context, kubeconfigPath string, version string, helmVal
 	// creating Kueue objects may hit "connection refused" on the webhook
 	fmt.Println("Waiting for Kueue webhook to be ready...")
 	if err := waitForWebhookReady(ctx, kubeconfigPath); err != nil {
-		return fmt.Errorf("Kueue webhook failed to become ready: %w", err)
+		return fmt.Errorf("kueue webhook failed to become ready: %w", err)
 	}
 
 	fmt.Println("✓ Kueue installed successfully")

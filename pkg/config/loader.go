@@ -9,7 +9,7 @@ import (
 
 // LoadTopology loads and parses a topology configuration file
 func LoadTopology(filepath string) (*Topology, error) {
-	data, err := os.ReadFile(filepath)
+	data, err := os.ReadFile(filepath) //nolint:gosec // filepath is user-provided CLI input, not untrusted
 	if err != nil {
 		return nil, fmt.Errorf("failed to read topology file: %w", err)
 	}

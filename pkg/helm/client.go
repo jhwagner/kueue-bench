@@ -71,7 +71,7 @@ func Install(ctx context.Context, opts InstallOptions) error {
 	}
 
 	// Locate and load the chart (works for both OCI and traditional repos)
-	chartPath, err := client.ChartPathOptions.LocateChart(opts.ChartRef, settings)
+	chartPath, err := client.LocateChart(opts.ChartRef, settings)
 	if err != nil {
 		return fmt.Errorf("failed to locate chart %s: %w", opts.ChartRef, err)
 	}

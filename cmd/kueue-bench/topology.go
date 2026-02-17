@@ -61,7 +61,7 @@ func init() {
 
 	// Flags for create command
 	topologyCreateCmd.Flags().StringVarP(&topologyFile, "file", "f", "", "path to topology configuration file (required)")
-	topologyCreateCmd.MarkFlagRequired("file")
+	_ = topologyCreateCmd.MarkFlagRequired("file")
 }
 
 func runTopologyCreate(cmd *cobra.Command, args []string) error {
@@ -134,16 +134,16 @@ func runTopologyList(cmd *cobra.Command, args []string) error {
 
 	// Use tabwriter for aligned output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tCLUSTERS\tCREATED")
-	fmt.Fprintln(w, "----\t--------\t-------")
+	_, _ = fmt.Fprintln(w, "NAME\tCLUSTERS\tCREATED")
+	_, _ = fmt.Fprintln(w, "----\t--------\t-------")
 	for _, topo := range topologies {
 		metadata := topo.GetMetadata()
-		fmt.Fprintf(w, "%s\t%d\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\n",
 			metadata.Name,
 			len(metadata.Clusters),
 			metadata.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

@@ -96,7 +96,7 @@ func DeleteCluster(ctx context.Context, name string) error {
 
 // Helper functions
 
-func generateKindConfig(cfg *config.ClusterConfig) *v1alpha4.Cluster {
+func generateKindConfig(_ *config.ClusterConfig) *v1alpha4.Cluster {
 	kindCfg := &v1alpha4.Cluster{
 		Nodes: []v1alpha4.Node{
 			{Role: v1alpha4.ControlPlaneRole},
@@ -114,7 +114,7 @@ func ExportKubeconfig(name string, kubeconfigPath string) error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0750); err != nil {
 		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
 	}
 

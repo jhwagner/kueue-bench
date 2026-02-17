@@ -61,7 +61,7 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 	kwokURL := fmt.Sprintf(kwokManifestURLTemplate, version)
 	hostNetworkMutator := func(obj *unstructured.Unstructured) {
 		if obj.GetKind() == "Deployment" && obj.GetName() == "kwok-controller" {
-			unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "hostNetwork")
+			_ = unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "hostNetwork")
 		}
 	}
 	if err := manifest.ApplyURL(ctx, dynamicClient, mapper, kwokURL, hostNetworkMutator); err != nil {
@@ -79,7 +79,7 @@ func Install(ctx context.Context, kubeconfigPath string, version string) error {
 	// Wait for Kwok controller to be ready
 	fmt.Println("Waiting for Kwok controller to be ready...")
 	if err := waitForDeployment(ctx, clientset, "kube-system", "kwok-controller"); err != nil {
-		return fmt.Errorf("Kwok controller failed to become ready: %w", err)
+		return fmt.Errorf("kwok controller failed to become ready: %w", err)
 	}
 
 	fmt.Println("✓ Kwok installed successfully")
