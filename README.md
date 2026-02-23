@@ -86,25 +86,9 @@ kueue-bench topology delete single-cluster
 
 ## Installation
 
-### Using Docker
+### Pre-built Binaries
 
-The easiest way to use kueue-bench is via Docker:
-
-```bash
-docker run -v /var/run/docker.sock:/var/run/docker.sock \
-  -v ~/.kueue-bench:/root/.kueue-bench \
-  ghcr.io/jhwagner/kueue-bench:main topology create single-cluster \
-  --file examples/single-cluster.yaml
-```
-
-**Volume mounts explained:**
-- `/var/run/docker.sock` - This is required for kind to create cluster containers as siblings on the host rather than nesting them within the kueue-bench container
-- `~/.kueue-bench` - Persists topology metadata across runs
-
-**Available tags:**
-- `main` - Latest build from main branch
-- `v*.*.*` - Stable versioned releases (e.g. `v1`, `v1.2`, `v1.2.3`)
-- `sha-<commit>` - Specific commit builds
+Download the latest release from the [GitHub Releases](https://github.com/jhwagner/kueue-bench/releases) page. Binaries are available for Linux and macOS (amd64/arm64).
 
 ### Build from Source
 
