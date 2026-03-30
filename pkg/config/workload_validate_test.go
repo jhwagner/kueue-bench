@@ -194,17 +194,6 @@ func TestValidateWorkloadProfile(t *testing.T) {
 			wantErr:     true,
 			errContains: "unsupported type \"Deployment\"",
 		},
-		{
-			name: "failureRate out of range",
-			profile: func() *WorkloadProfile {
-				p := validJobWorkloadProfile()
-				rate := 1.5
-				p.Spec.Workloads[0].Template.(*JobTemplate).FailureRate = &rate
-				return p
-			}(),
-			wantErr:     true,
-			errContains: "failureRate must be between 0.0 and 1.0",
-		},
 	}
 
 	for _, tt := range tests {

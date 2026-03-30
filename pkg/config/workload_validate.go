@@ -67,6 +67,17 @@ func validateWorkloadSpec(w *WorkloadSpec, index int) error {
 		return fmt.Errorf("spec.workloads[%d] (%s): weight must be > 0", index, w.Type)
 	}
 
+	for i, t := range w.Tolerations {
+		if t.Key == "" && t.Operator != "Exists" {
+			return fmt.Errorf("spec.workloads[%d]: tolerations[%d]: key is required unless operator is Exists", index, i)
+		}
+		switch t.Effect {
+		case "", "NoSchedule", "PreferNoSchedule", "NoExecute":
+		default:
+			return fmt.Errorf("spec.workloads[%d]: tolerations[%d]: invalid effect %q", index, i, t.Effect)
+		}
+	}
+
 	switch w.Type {
 	case "Job":
 		t, ok := w.Template.(*JobTemplate)
@@ -103,12 +114,6 @@ func validateCommonTemplate(c *CommonTemplate, workloadType string, index int) e
 	if c.Duration != nil {
 		if err := validateDistribution(c.Duration, "duration"); err != nil {
 			return fmt.Errorf("spec.workloads[%d] (%s): template.%w", index, workloadType, err)
-		}
-	}
-
-	if c.FailureRate != nil {
-		if *c.FailureRate < 0 || *c.FailureRate > 1 {
-			return fmt.Errorf("spec.workloads[%d] (%s): template.failureRate must be between 0.0 and 1.0", index, workloadType)
 		}
 	}
 

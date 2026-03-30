@@ -6,16 +6,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// marshalToYAML marshals v to YAML bytes using gopkg.in/yaml.v3.
-func marshalToYAML(v interface{}) ([]byte, error) {
-	return yaml.Marshal(v)
-}
-
-// unmarshalFromYAML unmarshals YAML bytes into v using gopkg.in/yaml.v3.
-func unmarshalFromYAML(data []byte, v interface{}) error {
-	return yaml.Unmarshal(data, v)
-}
-
 // WorkloadProfile represents a workload generation configuration
 type WorkloadProfile struct {
 	APIVersion string              `yaml:"apiVersion"`
@@ -42,30 +32,39 @@ type ArrivalPattern struct {
 // Template holds one of *JobTemplate, *JobSetTemplate, or *RayJobTemplate
 // depending on Type, populated via custom YAML unmarshalling.
 type WorkloadSpec struct {
-	Type          string      `yaml:"type"` // Job, JobSet, RayJob
-	Weight        int         `yaml:"weight"`
-	LocalQueue    string      `yaml:"localQueue,omitempty"`
-	Namespace     string      `yaml:"namespace,omitempty"`
-	PriorityClass string      `yaml:"priorityClass,omitempty"`
-	Template      interface{} `yaml:"-"`
+	Type          string        `yaml:"type"` // Job, JobSet, RayJob
+	Weight        int           `yaml:"weight"`
+	LocalQueue    string        `yaml:"localQueue,omitempty"`
+	Namespace     string        `yaml:"namespace,omitempty"`
+	PriorityClass string        `yaml:"priorityClass,omitempty"`
+	Tolerations   []Toleration  `yaml:"tolerations,omitempty"`
+	Template      interface{}   `yaml:"-"`
+}
+
+// Toleration represents a Kubernetes pod toleration.
+type Toleration struct {
+	Key      string `yaml:"key"`
+	Operator string `yaml:"operator,omitempty"` // Equal (default) or Exists
+	Value    string `yaml:"value,omitempty"`
+	Effect   string `yaml:"effect,omitempty"` // NoSchedule, PreferNoSchedule, NoExecute, or empty (matches all)
 }
 
 // UnmarshalYAML implements custom YAML unmarshalling for WorkloadSpec.
-// It reads the type field first, then unmarshals the template into the
+// It reads the type field first, then decodes the template node into the
 // appropriate typed struct.
-func (w *WorkloadSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	// Raw struct to capture all fields including template as raw YAML
+func (w *WorkloadSpec) UnmarshalYAML(value *yaml.Node) error {
 	type rawWorkloadSpec struct {
-		Type          string      `yaml:"type"`
-		Weight        int         `yaml:"weight"`
-		LocalQueue    string      `yaml:"localQueue,omitempty"`
-		Namespace     string      `yaml:"namespace,omitempty"`
-		PriorityClass string      `yaml:"priorityClass,omitempty"`
-		Template      interface{} `yaml:"template"`
+		Type          string       `yaml:"type"`
+		Weight        int          `yaml:"weight"`
+		LocalQueue    string       `yaml:"localQueue,omitempty"`
+		Namespace     string       `yaml:"namespace,omitempty"`
+		PriorityClass string       `yaml:"priorityClass,omitempty"`
+		Tolerations   []Toleration `yaml:"tolerations,omitempty"`
+		Template      yaml.Node    `yaml:"template"`
 	}
 
 	var raw rawWorkloadSpec
-	if err := unmarshal(&raw); err != nil {
+	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 
@@ -74,33 +73,28 @@ func (w *WorkloadSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	w.LocalQueue = raw.LocalQueue
 	w.Namespace = raw.Namespace
 	w.PriorityClass = raw.PriorityClass
+	w.Tolerations = raw.Tolerations
 
-	// Re-marshal the template node so we can unmarshal into the typed struct
-	if raw.Template == nil {
+	if raw.Template.Kind == 0 {
 		return nil
-	}
-
-	templateBytes, err := marshalToYAML(raw.Template)
-	if err != nil {
-		return fmt.Errorf("workload template: %w", err)
 	}
 
 	switch raw.Type {
 	case "Job":
 		var t JobTemplate
-		if err := unmarshalFromYAML(templateBytes, &t); err != nil {
+		if err := raw.Template.Decode(&t); err != nil {
 			return fmt.Errorf("Job template: %w", err)
 		}
 		w.Template = &t
 	case "JobSet":
 		var t JobSetTemplate
-		if err := unmarshalFromYAML(templateBytes, &t); err != nil {
+		if err := raw.Template.Decode(&t); err != nil {
 			return fmt.Errorf("JobSet template: %w", err)
 		}
 		w.Template = &t
 	case "RayJob":
 		var t RayJobTemplate
-		if err := unmarshalFromYAML(templateBytes, &t); err != nil {
+		if err := raw.Template.Decode(&t); err != nil {
 			return fmt.Errorf("RayJob template: %w", err)
 		}
 		w.Template = &t
@@ -115,8 +109,6 @@ func (w *WorkloadSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
 type CommonTemplate struct {
 	// Duration of the workload; maps to kwok.x-k8s.io/duration annotation
 	Duration *Distribution `yaml:"duration,omitempty"`
-	// FailureRate is the probability [0,1] that a workload is injected as failed
-	FailureRate *float64 `yaml:"failureRate,omitempty"`
 }
 
 // JobTemplate is the template for a batch/v1 Job workload.

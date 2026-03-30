@@ -28,7 +28,8 @@ import (
 // gonum.org/v1/gonum/stat/distuv, which is the standard scientific computing library
 // for Go and provides a broader set of well-tested distributions.
 type Sampler struct {
-	rng *rand.Rand
+	rng  *rand.Rand
+	seed int64
 }
 
 // NewSampler creates a Sampler with the given seed. If seed is nil, uses time.Now().UnixNano().
@@ -39,12 +40,26 @@ func NewSampler(seed *int64) *Sampler {
 	} else {
 		s = time.Now().UnixNano()
 	}
-	return &Sampler{rng: rand.New(rand.NewSource(s))}
+	return &Sampler{rng: rand.New(rand.NewSource(s)), seed: s} //nolint:gosec // deterministic seeded RNG, not for security
+}
+
+// Seed returns the effective seed used to initialise the RNG.
+// This is the value passed in (or auto-generated) at construction time.
+func (s *Sampler) Seed() int64 {
+	return s.seed
+}
+
+// Rand returns the underlying random number generator.
+// It allows components (e.g. arrival schedulers) to share the same seeded RNG.
+func (s *Sampler) Rand() *rand.Rand {
+	return s.rng
 }
 
 // SampleInt samples an integer value from the distribution.
 // Fixed values and distribution parameters are parsed as base-10 integers.
 // Used for: replica counts, parallelism, completions, workerReplicas.
+// Normal distribution results are clamped to a minimum of 1, since all current
+// integer fields represent counts that must be >= 1.
 func (s *Sampler) SampleInt(d *config.Distribution) (int64, error) {
 	if d.IsFixed() {
 		n, err := strconv.ParseInt(d.Value, 10, 64)
@@ -78,7 +93,10 @@ func (s *Sampler) SampleInt(d *config.Distribution) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("normal stddev %q: %w", d.Stddev, err)
 		}
-		sample := mean + stddev*s.rng.NormFloat64()
+		sample := sampleNormalFloat(mean, stddev, s.rng)
+		if sample < 1 {
+			sample = 1
+		}
 		return int64(math.Round(sample)), nil
 
 	case "lognormal":
@@ -90,9 +108,7 @@ func (s *Sampler) SampleInt(d *config.Distribution) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("lognormal stddev %q: %w", d.Stddev, err)
 		}
-		mu, sigma := lognormalParams(mean, stddev)
-		sample := math.Exp(mu + sigma*s.rng.NormFloat64())
-		return int64(math.Round(sample)), nil
+		return int64(math.Round(sampleLognormalFloat(mean, stddev, s.rng))), nil
 
 	case "choice":
 		val, err := s.weightedChoice(d.Values, d.Weights)
@@ -106,12 +122,16 @@ func (s *Sampler) SampleInt(d *config.Distribution) (int64, error) {
 	}
 }
 
-// SampleDuration samples a time.Duration from the distribution.
+// SampleDuration samples a time.Duration from the distribution, truncated to second precision.
 // Fixed values and distribution parameters are parsed as Go duration strings (e.g. "30m", "2h").
 // Used for: job duration (kwok.x-k8s.io/duration annotation).
 func (s *Sampler) SampleDuration(d *config.Distribution) (time.Duration, error) {
 	if d.IsFixed() {
-		return time.ParseDuration(d.Value)
+		dur, err := time.ParseDuration(d.Value)
+		if err != nil {
+			return 0, err
+		}
+		return dur.Truncate(time.Second), nil
 	}
 
 	switch d.Type {
@@ -124,11 +144,13 @@ func (s *Sampler) SampleDuration(d *config.Distribution) (time.Duration, error) 
 		if err != nil {
 			return 0, fmt.Errorf("uniform max %q: %w", d.Max, err)
 		}
+		min = min.Truncate(time.Second)
+		max = max.Truncate(time.Second)
 		if max < min {
 			return 0, fmt.Errorf("uniform max (%v) < min (%v)", max, min)
 		}
-		spread := max - min
-		return min + time.Duration(s.rng.Int63n(int64(spread)+1)), nil
+		spreadSecs := int64((max - min) / time.Second)
+		return min + time.Duration(s.rng.Int63n(spreadSecs+1))*time.Second, nil
 
 	case "normal":
 		mean, err := time.ParseDuration(d.Mean)
@@ -139,11 +161,11 @@ func (s *Sampler) SampleDuration(d *config.Distribution) (time.Duration, error) 
 		if err != nil {
 			return 0, fmt.Errorf("normal stddev %q: %w", d.Stddev, err)
 		}
-		sample := float64(mean) + float64(stddev)*s.rng.NormFloat64()
+		sample := sampleNormalFloat(float64(mean), float64(stddev), s.rng)
 		if sample < 0 {
 			sample = 0
 		}
-		return time.Duration(math.Round(sample)), nil
+		return time.Duration(math.Round(sample)).Truncate(time.Second), nil
 
 	case "lognormal":
 		mean, err := time.ParseDuration(d.Mean)
@@ -154,16 +176,18 @@ func (s *Sampler) SampleDuration(d *config.Distribution) (time.Duration, error) 
 		if err != nil {
 			return 0, fmt.Errorf("lognormal stddev %q: %w", d.Stddev, err)
 		}
-		mu, sigma := lognormalParams(float64(mean), float64(stddev))
-		sample := math.Exp(mu + sigma*s.rng.NormFloat64())
-		return time.Duration(math.Round(sample)), nil
+		return time.Duration(math.Round(sampleLognormalFloat(float64(mean), float64(stddev), s.rng))).Truncate(time.Second), nil
 
 	case "choice":
 		val, err := s.weightedChoice(d.Values, d.Weights)
 		if err != nil {
 			return 0, err
 		}
-		return time.ParseDuration(val)
+		dur, err := time.ParseDuration(val)
+		if err != nil {
+			return 0, err
+		}
+		return dur.Truncate(time.Second), nil
 
 	default:
 		return 0, fmt.Errorf("unsupported distribution type %q", d.Type)
@@ -226,12 +250,11 @@ func (s *Sampler) SampleQuantity(d *config.Distribution) (resource.Quantity, err
 		if err != nil {
 			return resource.Quantity{}, fmt.Errorf("normal stddev %q: %w", d.Stddev, err)
 		}
-		sample := float64(mean.MilliValue()) + float64(stddev.MilliValue())*s.rng.NormFloat64()
+		sample := sampleNormalFloat(float64(mean.MilliValue()), float64(stddev.MilliValue()), s.rng)
 		if sample < 0 {
 			sample = 0
 		}
-		result := resource.NewMilliQuantity(int64(math.Round(sample)), mean.Format)
-		return *result, nil
+		return *resource.NewMilliQuantity(int64(math.Round(sample)), mean.Format), nil
 
 	case "lognormal":
 		mean, err := resource.ParseQuantity(d.Mean)
@@ -242,10 +265,8 @@ func (s *Sampler) SampleQuantity(d *config.Distribution) (resource.Quantity, err
 		if err != nil {
 			return resource.Quantity{}, fmt.Errorf("lognormal stddev %q: %w", d.Stddev, err)
 		}
-		mu, sigma := lognormalParams(float64(mean.MilliValue()), float64(stddev.MilliValue()))
-		sample := math.Exp(mu + sigma*s.rng.NormFloat64())
-		result := resource.NewMilliQuantity(int64(math.Round(sample)), mean.Format)
-		return *result, nil
+		sample := sampleLognormalFloat(float64(mean.MilliValue()), float64(stddev.MilliValue()), s.rng)
+		return *resource.NewMilliQuantity(int64(math.Round(sample)), mean.Format), nil
 
 	case "choice":
 		val, err := s.weightedChoice(d.Values, d.Weights)
@@ -263,33 +284,63 @@ func (s *Sampler) SampleQuantity(d *config.Distribution) (resource.Quantity, err
 	}
 }
 
+// SampleIndex selects a random index in [0, n) using weighted sampling.
+// weights must have len(weights) == n when non-empty; a length mismatch falls back
+// to uniform selection to avoid silent over-representation of the last index.
+// If weights is empty or all weights sum to zero, uniform selection is used.
+func (s *Sampler) SampleIndex(n int, weights []int) int {
+	if n <= 0 {
+		return 0
+	}
+	if len(weights) > 0 && len(weights) != n {
+		// Caller contract violation: weights/n mismatch. Fall back to uniform.
+		return s.rng.Intn(n)
+	}
+	total := 0
+	for _, w := range weights {
+		total += w
+	}
+	if total <= 0 {
+		return s.rng.Intn(n)
+	}
+	r := s.rng.Intn(total)
+	cumulative := 0
+	for i, w := range weights {
+		cumulative += w
+		if r < cumulative {
+			return i
+		}
+	}
+	return n - 1
+}
+
 // weightedChoice selects a value from values using optional weights.
 // If weights is nil or empty, uniform selection is used.
 func (s *Sampler) weightedChoice(values []string, weights []int) (string, error) {
 	if len(values) == 0 {
 		return "", fmt.Errorf("choice: values must not be empty")
 	}
-	if len(weights) == 0 {
-		return values[s.rng.Intn(len(values))], nil
-	}
-
-	total := 0
-	for _, w := range weights {
-		total += w
-	}
-	if total <= 0 {
-		return "", fmt.Errorf("choice: total weight must be > 0, got %d", total)
-	}
-
-	r := s.rng.Intn(total)
-	cumulative := 0
-	for i, w := range weights {
-		cumulative += w
-		if r < cumulative {
-			return values[i], nil
+	if len(weights) > 0 {
+		total := 0
+		for _, w := range weights {
+			total += w
+		}
+		if total <= 0 {
+			return "", fmt.Errorf("choice: total weight must be > 0, got %d", total)
 		}
 	}
-	return values[len(values)-1], nil
+	return values[s.SampleIndex(len(values), weights)], nil
+}
+
+// sampleNormalFloat returns a normally distributed float64 with the given mean and stddev.
+func sampleNormalFloat(mean, stddev float64, rng *rand.Rand) float64 {
+	return mean + stddev*rng.NormFloat64()
+}
+
+// sampleLognormalFloat returns a log-normally distributed float64 with the given mean and stddev.
+func sampleLognormalFloat(mean, stddev float64, rng *rand.Rand) float64 {
+	mu, sigma := lognormalParams(mean, stddev)
+	return math.Exp(mu + sigma*rng.NormFloat64())
 }
 
 // lognormalParams converts the desired lognormal mean and stddev into the
