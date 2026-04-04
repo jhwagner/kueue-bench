@@ -1,0 +1,61 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: cohort-borrowing
+spec:
+  seed: 100
+  # 15-minute window; expect ~20-25 min total wall time including drain
+  duration: 15m
+
+  arrivalPattern:
+    type: poisson
+    ratePerMinute: 14
+
+  # Saturation math (against cohort-borrowing topology: 80 GPU total, 40 GPU/team):
+  #
+  #   Team A (weight 30 → ~4.2 jobs/min):
+  #     avg GPU/job = 5 (uniform 2–8), avg duration = 45s = 0.75 min
+  #     demand = 4.2 × 5 × 0.75 ≈ 15.8 GPU → ~39% of 40 GPU quota
+  #     idle quota ≈ 24 GPU available to lend
+  #
+  #   Team B (weight 70 → ~9.8 jobs/min):
+  #     avg GPU/job = 6 (uniform 4–8), avg duration = 60s = 1.0 min
+  #     demand = 9.8 × 6 × 1.0 ≈ 58.8 GPU → ~147% of 40 GPU quota
+  #     borrows ~19 GPU from Team A's idle at steady state
+  #
+  #   Total cluster utilization with cohort: (15.8 + 58.8) / 80 ≈ 93%
+  #   Total cluster utilization without cohort: Team A 39%, Team B capped at 100%
+  #
+  # Run this profile against the cohort-borrowing topology:
+  #   kueue-bench topology create -f examples/topologies/cohort-borrowing.yaml
+  #   kueue-bench workload submit --topology cohort-borrowing --profile examples/workloads/cohort-borrowing.yaml
+
+  workloads:
+    # Team A — low-utilization tenant; holds a reservation but rarely saturates it.
+    # At steady state, ~24 GPUs sit idle and are available for Team B to borrow.
+    - type: Job
+      weight: 30
+      localQueue: team-a-lq
+      namespace: team-a
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "2", max: "8" }
+            cpu: { distribution: uniform, min: "8", max: "16" }
+            memory: { distribution: uniform, min: "32Gi", max: "64Gi" }
+        duration: { distribution: lognormal, mean: "45s", stddev: "15s" }
+
+    # Team B — high-utilization tenant; demand exceeds its own quota by ~50%.
+    # Without the cohort, ~19 GPUs worth of jobs would be pending at all times.
+    # With the cohort, Team B bursts into Team A's idle quota at no additional cost.
+    - type: Job
+      weight: 70
+      localQueue: team-b-lq
+      namespace: team-b
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "4", max: "8" }
+            cpu: { distribution: uniform, min: "16", max: "32" }
+            memory: { distribution: uniform, min: "64Gi", max: "128Gi" }
+        duration: { distribution: lognormal, mean: "60s", stddev: "20s" }

@@ -117,9 +117,14 @@ See the `examples/` directory for topology and workload configurations:
 - `single-cluster-gpu.yaml` — Multi-pool setup with CPU and GPU nodes
 - `single-cluster-with-extensions.yaml` — Installing additional components (e.g. JobSet) via Helm
 - `multikueue.yaml` — MultiKueue topology with WorkerSets and automatic quota derivation
+- `basic-queue.yaml` — Single-queue CPU cluster; paired with the basic-queue workload profile
+- `cohort-borrowing.yaml` — Two-tenant GPU cohort demonstrating idle quota lending
+- `fair-share-contention.yaml` — Three-tenant GPU cohort with fair-sharing under sustained contention
 
 **Workload Profiles** (`examples/workloads/`):
-- `ml-training-mix.yaml` — Mixed ML training workloads with Poisson arrival pattern
+- `basic-queue.yaml` — CPU jobs targeting a single queue; ~61% steady-state utilization
+- `cohort-borrowing.yaml` — GPU jobs showing Team B bursting into Team A's idle quota
+- `fair-share-contention.yaml` — GPU jobs showing proportional borrowing under oversubscription
 
 ## Configuration
 

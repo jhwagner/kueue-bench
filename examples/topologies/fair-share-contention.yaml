@@ -1,0 +1,127 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: fair-share-contention
+  annotations:
+    kueue-bench.io/description: |
+      Three-tenant cohort demonstrating fair sharing under sustained contention.
+
+      Team A is underutilized and its idle quota is available to lend. Teams B and C
+      both exceed their own quotas and compete to borrow from Team A's idle capacity.
+      Fair sharing weights ensure neither borrower can starve the other.
+
+      Without fair sharing: first-come-first-served; one team monopolizes all borrowable
+      capacity while the other queues indefinitely — the platform team cannot make
+      admission latency SLA commitments.
+
+      With fair sharing: each team receives proportional access to borrowed capacity;
+      the platform team can credibly guarantee per-tenant admission SLAs.
+
+      Paired workload profile: examples/workloads/fair-share-contention.yaml
+      Phase 6 comparison: run the same profile against a variant with fairSharing
+      disabled to show p95 admission latency divergence across tenants.
+spec:
+  clusters:
+    - name: standalone
+      role: standalone
+
+      # 10 nodes × 8 GPU = 80 GPU total
+      # Team A: 30 GPU, Team B: 30 GPU, Team C: 20 GPU (total quota = 80 GPU = full cluster)
+      # Paired workload drives: Team A ~50% util (15 GPU idle to lend),
+      # Team B 150% demand (wants to borrow 15), Team C 150% demand (wants to borrow 10)
+      # → B+C compete for 15 GPU of borrowable capacity; fair sharing splits it evenly
+      nodePools:
+        - name: gpu-pool
+          count: 10
+          resources:
+            cpu: "32"
+            memory: "128Gi"
+            nvidia.com/gpu: "8"
+          labels:
+            node-type: gpu
+
+      kueue:
+        resourceFlavors:
+          - name: gpu-node
+            nodeLabels:
+              node-type: gpu
+
+        clusterQueues:
+          - name: team-a-cq
+            cohort: platform
+            namespaceSelector: {}
+            # Fair sharing weight: Team A is the lender in this scenario.
+            # Weight is set so that if Team A ever needs to borrow, it gets equal treatment.
+            fairSharing:
+              weight: 1
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "30"
+                      - name: cpu
+                        nominalQuota: "120"
+                      - name: memory
+                        nominalQuota: "480Gi"
+
+          - name: team-b-cq
+            cohort: platform
+            namespaceSelector: {}
+            # Equal weight to Team C — both compete for Team A's idle; neither can starve the other
+            fairSharing:
+              weight: 1
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "30"
+                      - name: cpu
+                        nominalQuota: "120"
+                      - name: memory
+                        nominalQuota: "480Gi"
+
+          - name: team-c-cq
+            cohort: platform
+            namespaceSelector: {}
+            fairSharing:
+              weight: 1
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "20"
+                      - name: cpu
+                        nominalQuota: "80"
+                      - name: memory
+                        nominalQuota: "320Gi"
+
+        cohorts:
+          - name: platform
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "0"
+                      - name: cpu
+                        nominalQuota: "0"
+                      - name: memory
+                        nominalQuota: "0"
+
+        localQueues:
+          - name: team-a-lq
+            namespace: team-a
+            clusterQueue: team-a-cq
+          - name: team-b-lq
+            namespace: team-b
+            clusterQueue: team-b-cq
+          - name: team-c-lq
+            namespace: team-c
+            clusterQueue: team-c-cq

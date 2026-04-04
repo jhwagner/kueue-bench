@@ -1,0 +1,99 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: cohort-borrowing
+  annotations:
+    kueue-bench.io/description: |
+      Two-tenant cohort demonstrating GPU borrowing and lending.
+
+      Team A holds a large reservation but runs at ~40% utilization — typical of a
+      team that bought a cloud GPU reservation for peak demand but rarely hits it.
+      Team B runs at 150% of its own quota and bursts into Team A's idle capacity.
+
+      Value story:
+        Lender (Team A): idle reservation generates chargeback credits rather than waste
+        Borrower (Team B): burst capacity without buying another reservation block
+
+      Paired workload profile: examples/workloads/cohort-borrowing.yaml
+      Phase 6 comparison: run the same profile against cohort-borrowing-isolated.yaml
+      (no cohort) to quantify wait time reduction and lending volume.
+spec:
+  clusters:
+    - name: standalone
+      role: standalone
+
+      # 10 nodes × 8 GPU = 80 GPU total
+      # Team A quota: 40 GPU, Team B quota: 40 GPU
+      # Paired workload creates ~40% utilization for Team A, ~150% demand for Team B
+      # → Team B borrows ~20 GPU from Team A's idle 24 GPU at steady state
+      nodePools:
+        - name: gpu-pool
+          count: 10
+          resources:
+            cpu: "32"
+            memory: "128Gi"
+            nvidia.com/gpu: "8"
+          labels:
+            node-type: gpu
+
+      kueue:
+        resourceFlavors:
+          - name: gpu-node
+            nodeLabels:
+              node-type: gpu
+
+        clusterQueues:
+          - name: team-a-cq
+            cohort: platform
+            namespaceSelector: {}
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "40"
+                      - name: cpu
+                        nominalQuota: "160"
+                      - name: memory
+                        nominalQuota: "640Gi"
+
+          - name: team-b-cq
+            cohort: platform
+            namespaceSelector: {}
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "40"
+                      - name: cpu
+                        nominalQuota: "160"
+                      - name: memory
+                        nominalQuota: "640Gi"
+
+        cohorts:
+          - name: platform
+            resourceGroups:
+              - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+                flavors:
+                  # nominalQuota: 0 — cohort has no quota of its own; borrowable
+                  # capacity comes entirely from CQ idle quota (no lendingLimit set,
+                  # so both teams can lend their full idle quota to the cohort)
+                  - name: gpu-node
+                    resources:
+                      - name: nvidia.com/gpu
+                        nominalQuota: "0"
+                      - name: cpu
+                        nominalQuota: "0"
+                      - name: memory
+                        nominalQuota: "0"
+
+        localQueues:
+          - name: team-a-lq
+            namespace: team-a
+            clusterQueue: team-a-cq
+          - name: team-b-lq
+            namespace: team-b
+            clusterQueue: team-b-cq

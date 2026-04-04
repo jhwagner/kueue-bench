@@ -1,0 +1,49 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: basic-queue
+spec:
+  # Fixed seed for reproducible runs
+  seed: 42
+  # 10-minute window; expect ~15 min total wall time including drain
+  duration: 10m
+
+  arrivalPattern:
+    type: poisson
+    ratePerMinute: 10
+
+  # Saturation math (against basic-queue topology: 20 CPU total):
+  #   Type 1 (70%, 7 jobs/min): avg 2.5 CPU × 0.5 min = 8.75 CPU
+  #   Type 2 (30%, 3 jobs/min): avg 3 CPU (3 pods × 1) × 0.375 min = 3.4 CPU
+  #   Total steady-state demand ≈ 12.2 CPU → ~61% utilization
+  #
+  # Run this profile against the basic-queue topology:
+  #   kueue-bench topology create -f examples/topologies/basic-queue.yaml
+  #   kueue-bench workload submit --topology basic-queue --profile examples/workloads/basic-queue.yaml
+
+  workloads:
+    # Single-pod CPU jobs — demonstrates basic Job admission and completion
+    - type: Job
+      weight: 70
+      localQueue: default-lq
+      namespace: default
+      template:
+        resources:
+          requests:
+            cpu: { distribution: uniform, min: "1", max: "4" }
+            memory: { distribution: uniform, min: "4Gi", max: "8Gi" }
+        duration: { distribution: uniform, min: "20s", max: "40s" }
+
+    # Parallel jobs — demonstrates parallelism/completions fields
+    - type: Job
+      weight: 30
+      localQueue: default-lq
+      namespace: default
+      template:
+        parallelism: { distribution: choice, values: ["2", "4"] }
+        completions: { distribution: choice, values: ["2", "4"] }
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+        duration: { distribution: uniform, min: "15s", max: "30s" }

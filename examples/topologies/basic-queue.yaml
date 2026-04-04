@@ -1,0 +1,45 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: Topology
+metadata:
+  name: basic-queue
+  annotations:
+    kueue-bench.io/description: "Single-cluster, single-queue topology for demonstrating basic WorkloadProfile and workload submit behavior"
+spec:
+  clusters:
+    - name: standalone
+      role: standalone
+
+      # 5 nodes × 4 CPU / 16Gi = 20 CPU total
+      # Paired with basic-queue workload profile: ~62% steady-state CPU utilization
+      nodePools:
+        - name: cpu-pool
+          count: 5
+          resources:
+            cpu: "4"
+            memory: "16Gi"
+          labels:
+            node-type: cpu
+
+      kueue:
+        resourceFlavors:
+          - name: default-flavor
+            nodeLabels:
+              node-type: cpu
+
+        clusterQueues:
+          - name: default-cq
+            namespaceSelector: {}
+            resourceGroups:
+              - coveredResources: ["cpu", "memory"]
+                flavors:
+                  - name: default-flavor
+                    resources:
+                      - name: cpu
+                        nominalQuota: "20"
+                      - name: memory
+                        nominalQuota: "80Gi"
+
+        localQueues:
+          - name: default-lq
+            namespace: default
+            clusterQueue: default-cq

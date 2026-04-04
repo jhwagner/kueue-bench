@@ -1,0 +1,87 @@
+apiVersion: kueue-bench.io/v1alpha1
+kind: WorkloadProfile
+metadata:
+  name: fair-share-contention
+spec:
+  seed: 200
+  # 15-minute window; expect ~25-30 min total wall time including drain
+  # (longer drain than cohort-borrowing due to sustained 112% cluster saturation)
+  duration: 15m
+
+  arrivalPattern:
+    type: poisson
+    ratePerMinute: 12
+
+  # Saturation math (against fair-share-contention topology: 80 GPU total):
+  #
+  #   Team A (weight 2 → ~2 jobs/min):
+  #     avg GPU/job = 5 (uniform 2–8), avg duration = 90s = 1.5 min
+  #     demand = 2 × 5 × 1.5 = 15 GPU → ~50% of 30 GPU quota
+  #     idle quota ≈ 15 GPU available to lend
+  #
+  #   Team B (weight 6 → ~6 jobs/min):
+  #     avg GPU/job = 5, avg duration = 90s = 1.5 min
+  #     demand = 6 × 5 × 1.5 = 45 GPU → ~150% of 30 GPU quota
+  #     wants to borrow ~15 GPU
+  #
+  #   Team C (weight 4 → ~4 jobs/min):
+  #     avg GPU/job = 5, avg duration = 90s = 1.5 min
+  #     demand = 4 × 5 × 1.5 = 30 GPU → ~150% of 20 GPU quota
+  #     wants to borrow ~10 GPU
+  #
+  #   Total demand: 90 GPU vs. 80 GPU capacity → sustained contention
+  #   B+C compete for 15 GPU from Team A; only 15 available vs. 25 demanded
+  #
+  #   With fair sharing (equal weights): B gets ~7.5 GPU, C gets ~7.5 GPU
+  #     → Team B runs 37.5/45 = 83% of demand; Team C runs 27.5/30 = 92%
+  #   Without fair sharing: first submitter monopolizes all 15 borrowed GPU
+  #     → one team's p95 admission latency collapses; the other's diverges
+  #
+  # Run this profile against the fair-share-contention topology:
+  #   kueue-bench topology create -f examples/topologies/fair-share-contention.yaml
+  #   kueue-bench workload submit --topology fair-share-contention --profile examples/workloads/fair-share-contention.yaml
+
+  workloads:
+    # Team A — lender. Moderate arrival rate, well under quota.
+    # ~15 GPU stays idle at steady state, available for Teams B and C to borrow.
+    - type: Job
+      weight: 2
+      localQueue: team-a-lq
+      namespace: team-a
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "2", max: "8" }
+            cpu: { distribution: uniform, min: "8", max: "16" }
+            memory: { distribution: uniform, min: "32Gi", max: "64Gi" }
+        duration: { distribution: lognormal, mean: "90s", stddev: "30s" }
+
+    # Team B — heavy borrower. 150% demand relative to quota.
+    # Competes with Team C for Team A's idle capacity.
+    # Fair sharing ensures Team B cannot starve Team C even if it submits first.
+    - type: Job
+      weight: 6
+      localQueue: team-b-lq
+      namespace: team-b
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "2", max: "8" }
+            cpu: { distribution: uniform, min: "8", max: "16" }
+            memory: { distribution: uniform, min: "32Gi", max: "64Gi" }
+        duration: { distribution: lognormal, mean: "90s", stddev: "30s" }
+
+    # Team C — moderate borrower. 150% demand relative to (smaller) quota.
+    # Without fair sharing, Team B's higher absolute arrival rate tends to
+    # crowd out Team C entirely from the shared borrowing pool.
+    - type: Job
+      weight: 4
+      localQueue: team-c-lq
+      namespace: team-c
+      template:
+        resources:
+          requests:
+            nvidia.com/gpu: { distribution: uniform, min: "2", max: "8" }
+            cpu: { distribution: uniform, min: "8", max: "16" }
+            memory: { distribution: uniform, min: "32Gi", max: "64Gi" }
+        duration: { distribution: lognormal, mean: "90s", stddev: "30s" }
