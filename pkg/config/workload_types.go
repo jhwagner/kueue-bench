@@ -83,19 +83,19 @@ func (w *WorkloadSpec) UnmarshalYAML(value *yaml.Node) error {
 	case "Job":
 		var t JobTemplate
 		if err := raw.Template.Decode(&t); err != nil {
-			return fmt.Errorf("Job template: %w", err)
+			return fmt.Errorf("job template: %w", err)
 		}
 		w.Template = &t
 	case "JobSet":
 		var t JobSetTemplate
 		if err := raw.Template.Decode(&t); err != nil {
-			return fmt.Errorf("JobSet template: %w", err)
+			return fmt.Errorf("jobset template: %w", err)
 		}
 		w.Template = &t
 	case "RayJob":
 		var t RayJobTemplate
 		if err := raw.Template.Decode(&t); err != nil {
-			return fmt.Errorf("RayJob template: %w", err)
+			return fmt.Errorf("rayjob template: %w", err)
 		}
 		w.Template = &t
 	default:
