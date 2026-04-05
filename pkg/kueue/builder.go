@@ -5,7 +5,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 )
 
 // BuildCohort builds a Kueue Cohort from a config Cohort
@@ -61,7 +61,7 @@ func BuildClusterQueue(cq config.ClusterQueue) *kueue.ClusterQueue {
 		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "ClusterQueue"},
 		ObjectMeta: metav1.ObjectMeta{Name: cq.Name},
 		Spec: kueue.ClusterQueueSpec{
-			Cohort:         kueue.CohortReference(cq.Cohort),
+			CohortName:     kueue.CohortReference(cq.Cohort),
 			ResourceGroups: buildResourceGroups(cq.ResourceGroups),
 		},
 	}
@@ -80,10 +80,11 @@ func BuildClusterQueue(cq config.ClusterQueue) *kueue.ClusterQueue {
 
 	// Build admission checks if present
 	if len(cq.AdmissionChecks) > 0 {
-		kueueCQ.Spec.AdmissionChecks = make([]kueue.AdmissionCheckReference, len(cq.AdmissionChecks))
+		rules := make([]kueue.AdmissionCheckStrategyRule, len(cq.AdmissionChecks))
 		for i, ac := range cq.AdmissionChecks {
-			kueueCQ.Spec.AdmissionChecks[i] = kueue.AdmissionCheckReference(ac)
+			rules[i] = kueue.AdmissionCheckStrategyRule{Name: kueue.AdmissionCheckReference(ac)}
 		}
+		kueueCQ.Spec.AdmissionChecksStrategy = &kueue.AdmissionChecksStrategy{AdmissionChecks: rules}
 	}
 
 	// Build fair sharing if present
@@ -214,9 +215,11 @@ func BuildMultiKueueCluster(name, kubeconfigSecretName string) *kueue.MultiKueue
 		TypeMeta:   metav1.TypeMeta{APIVersion: kueue.SchemeGroupVersion.String(), Kind: "MultiKueueCluster"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: kueue.MultiKueueClusterSpec{
-			KubeConfig: kueue.KubeConfig{
-				Location:     kubeconfigSecretName,
-				LocationType: kueue.SecretLocationType,
+			ClusterSource: kueue.ClusterSource{
+				KubeConfig: &kueue.KubeConfig{
+					Location:     kubeconfigSecretName,
+					LocationType: kueue.SecretLocationType,
+				},
 			},
 		},
 	}

@@ -10,13 +10,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
-	kueuev1beta1 "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	kueueclientset "sigs.k8s.io/kueue/client-go/clientset/versioned"
 )
 
 const (
 	// DefaultKueueVersion is the default Kueue version to install
-	DefaultKueueVersion = "0.15.2"
+	DefaultKueueVersion = "0.17.0"
 
 	// Kueue Helm OCI registry configuration
 	kueueHelmRegistryURL = "oci://registry.k8s.io/kueue/charts/kueue"
@@ -79,13 +79,13 @@ func waitForWebhookReady(ctx context.Context, kubeconfigPath string) error {
 		return fmt.Errorf("failed to create Kueue clientset: %w", err)
 	}
 
-	probe := &kueuev1beta1.ResourceFlavor{
+	probe := &kueuev1beta2.ResourceFlavor{
 		ObjectMeta: metav1.ObjectMeta{Name: "webhook-probe"},
 	}
 	dryRun := metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}
 
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, 180*time.Second, true, func(ctx context.Context) (bool, error) {
-		_, err := client.KueueV1beta1().ResourceFlavors().Create(ctx, probe, dryRun)
+		_, err := client.KueueV1beta2().ResourceFlavors().Create(ctx, probe, dryRun)
 		return err == nil, nil
 	})
 }

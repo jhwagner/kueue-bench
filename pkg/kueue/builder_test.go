@@ -6,7 +6,7 @@ import (
 	"github.com/jhwagner/kueue-bench/pkg/config"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta1"
+	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 )
 
 func TestBuildCohort(t *testing.T) {
@@ -225,8 +225,8 @@ func TestBuildClusterQueue(t *testing.T) {
 				if cq.Name != "main-queue" {
 					t.Errorf("expected name 'main-queue', got '%s'", cq.Name)
 				}
-				if cq.Spec.Cohort != "platform" {
-					t.Errorf("expected cohort 'platform', got '%s'", cq.Spec.Cohort)
+				if cq.Spec.CohortName != "platform" {
+					t.Errorf("expected cohort 'platform', got '%s'", cq.Spec.CohortName)
 				}
 				if len(cq.Spec.ResourceGroups) != 1 {
 					t.Fatalf("expected 1 resource group, got %d", len(cq.Spec.ResourceGroups))
@@ -305,14 +305,15 @@ func TestBuildClusterQueue(t *testing.T) {
 				},
 			},
 			checkFn: func(t *testing.T, cq *kueue.ClusterQueue) {
-				if len(cq.Spec.AdmissionChecks) != 2 {
-					t.Fatalf("expected 2 admission checks, got %d", len(cq.Spec.AdmissionChecks))
+				strategy := cq.Spec.AdmissionChecksStrategy
+				if strategy == nil || len(strategy.AdmissionChecks) != 2 {
+					t.Fatalf("expected 2 admission checks, got %v", strategy)
 				}
-				if cq.Spec.AdmissionChecks[0] != "multikueue-ac" {
-					t.Errorf("expected first admission check 'multikueue-ac', got '%s'", cq.Spec.AdmissionChecks[0])
+				if strategy.AdmissionChecks[0].Name != "multikueue-ac" {
+					t.Errorf("expected first admission check 'multikueue-ac', got '%s'", strategy.AdmissionChecks[0].Name)
 				}
-				if cq.Spec.AdmissionChecks[1] != "sample-ac" {
-					t.Errorf("expected second admission check 'sample-ac', got '%s'", cq.Spec.AdmissionChecks[1])
+				if strategy.AdmissionChecks[1].Name != "sample-ac" {
+					t.Errorf("expected second admission check 'sample-ac', got '%s'", strategy.AdmissionChecks[1].Name)
 				}
 			},
 		},
@@ -381,11 +382,12 @@ func TestBuildClusterQueue(t *testing.T) {
 				},
 			},
 			checkFn: func(t *testing.T, cq *kueue.ClusterQueue) {
-				if len(cq.Spec.AdmissionChecks) != 1 {
-					t.Fatalf("expected 1 admission check, got %d", len(cq.Spec.AdmissionChecks))
+				strategy := cq.Spec.AdmissionChecksStrategy
+				if strategy == nil || len(strategy.AdmissionChecks) != 1 {
+					t.Fatalf("expected 1 admission check, got %v", strategy)
 				}
-				if cq.Spec.AdmissionChecks[0] != "multikueue-ac" {
-					t.Errorf("expected admission check 'multikueue-ac', got '%s'", cq.Spec.AdmissionChecks[0])
+				if strategy.AdmissionChecks[0].Name != "multikueue-ac" {
+					t.Errorf("expected admission check 'multikueue-ac', got '%s'", strategy.AdmissionChecks[0].Name)
 				}
 				if cq.Spec.FairSharing == nil {
 					t.Fatal("expected FairSharing to be set")
@@ -549,11 +551,15 @@ func TestBuildMultiKueueCluster(t *testing.T) {
 				if mkc.Name != "worker-us-west" {
 					t.Errorf("expected name 'worker-us-west', got '%s'", mkc.Name)
 				}
-				if mkc.Spec.KubeConfig.Location != "worker-us-west-kubeconfig" {
-					t.Errorf("expected kubeconfig location 'worker-us-west-kubeconfig', got '%s'", mkc.Spec.KubeConfig.Location)
+				kc := mkc.Spec.ClusterSource.KubeConfig
+				if kc == nil {
+					t.Fatal("expected KubeConfig to be set")
 				}
-				if mkc.Spec.KubeConfig.LocationType != kueue.SecretLocationType {
-					t.Errorf("expected location type 'Secret', got '%s'", mkc.Spec.KubeConfig.LocationType)
+				if kc.Location != "worker-us-west-kubeconfig" {
+					t.Errorf("expected kubeconfig location 'worker-us-west-kubeconfig', got '%s'", kc.Location)
+				}
+				if kc.LocationType != kueue.SecretLocationType {
+					t.Errorf("expected location type 'Secret', got '%s'", kc.LocationType)
 				}
 			},
 		},
