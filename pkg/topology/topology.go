@@ -239,6 +239,7 @@ func (t *Topology) createClusterInfrastructure(ctx context.Context, clusterCfg *
 		Name:            clusterName,
 		KindClusterName: kindClusterName,
 		KubeconfigPath:  kubeconfigPath,
+		Role:            clusterCfg.Role,
 		CreatedAt:       time.Now(),
 	}
 

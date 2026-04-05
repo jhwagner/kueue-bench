@@ -16,5 +16,6 @@ type Cluster struct {
 	Name            string    `json:"name"`
 	KindClusterName string    `json:"kindClusterName"`
 	KubeconfigPath  string    `json:"kubeconfigPath"`
+	Role            string    `json:"role,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 }
