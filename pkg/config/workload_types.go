@@ -32,13 +32,13 @@ type ArrivalPattern struct {
 // Template holds one of *JobTemplate, *JobSetTemplate, or *RayJobTemplate
 // depending on Type, populated via custom YAML unmarshalling.
 type WorkloadSpec struct {
-	Type          string        `yaml:"type"` // Job, JobSet, RayJob
-	Weight        int           `yaml:"weight"`
-	LocalQueue    string        `yaml:"localQueue,omitempty"`
-	Namespace     string        `yaml:"namespace,omitempty"`
-	PriorityClass string        `yaml:"priorityClass,omitempty"`
-	Tolerations   []Toleration  `yaml:"tolerations,omitempty"`
-	Template      interface{}   `yaml:"-"`
+	Type          string       `yaml:"type"` // Job, JobSet, RayJob
+	Weight        int          `yaml:"weight"`
+	LocalQueue    string       `yaml:"localQueue,omitempty"`
+	Namespace     string       `yaml:"namespace,omitempty"`
+	PriorityClass string       `yaml:"priorityClass,omitempty"`
+	Tolerations   []Toleration `yaml:"tolerations,omitempty"`
+	Template      interface{}  `yaml:"-"`
 }
 
 // Toleration represents a Kubernetes pod toleration.
