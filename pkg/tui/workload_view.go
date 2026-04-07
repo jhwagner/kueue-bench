@@ -1,0 +1,340 @@
+package tui
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/jhwagner/kueue-bench/pkg/watcher"
+)
+
+// workloadFilter is the active status filter for the workload table.
+type workloadFilter int
+
+const (
+	filterAll workloadFilter = iota
+	filterPending
+	filterQuotaReserved
+	filterAdmitted
+	filterFinished
+	filterEvicted
+)
+
+var filterOrder = []workloadFilter{
+	filterAll,
+	filterPending,
+	filterQuotaReserved,
+	filterAdmitted,
+	filterFinished,
+	filterEvicted,
+}
+
+func (f workloadFilter) String() string {
+	switch f {
+	case filterPending:
+		return "Pending"
+	case filterQuotaReserved:
+		return "QuotaReserved"
+	case filterAdmitted:
+		return "Admitted"
+	case filterFinished:
+		return "Finished"
+	case filterEvicted:
+		return "Evicted"
+	default:
+		return "All"
+	}
+}
+
+const (
+	wlColName         = 28
+	wlColType         = 8
+	wlColQueue        = 18
+	wlColStatus       = 14
+	wlColAge          = 6
+	wlColResources    = 18
+	wlColDispatchedTo = 14
+)
+
+// workloadViewModel renders the filterable workload overview table.
+//
+// The view stores its own copy of snapshot/width/height so that internal state
+// changes (filter cycling, future sort/search) can call rebuild() directly
+// without parent involvement.
+type workloadViewModel struct {
+	t            table.Model
+	filter       workloadFilter
+	isManagement bool
+	workloadKeys []string // matches row order; used to restore cursor by key
+
+	// stored for rebuild on internal state changes
+	snapshot watcher.Snapshot
+	width    int
+	height   int
+}
+
+func newWorkloadView(isManagement bool) workloadViewModel {
+	t := table.New(
+		table.WithFocused(true),
+		table.WithStyles(defaultTableStyles()),
+	)
+	return workloadViewModel{t: t, isManagement: isManagement}
+}
+
+func (m *workloadViewModel) update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.t, cmd = m.t.Update(msg)
+	return cmd
+}
+
+func (m *workloadViewModel) cycleFilter() {
+	for i, f := range filterOrder {
+		if f == m.filter {
+			m.filter = filterOrder[(i+1)%len(filterOrder)]
+			m.rebuild()
+			return
+		}
+	}
+	m.filter = filterAll
+	m.rebuild()
+}
+
+func (m workloadViewModel) view() string {
+	filterLabel := lipgloss.NewStyle().Foreground(colorSubtle).Render(
+		fmt.Sprintf("  filter: %s", m.filter.String()),
+	)
+	return filterLabel + "\n" + m.t.View()
+}
+
+// selectedWorkloadKey returns the "namespace/name" key of the highlighted row, or "".
+func (m workloadViewModel) selectedWorkloadKey() string {
+	row := m.t.SelectedRow()
+	if len(row) == 0 || m.t.Cursor() >= len(m.workloadKeys) {
+		return ""
+	}
+	return m.workloadKeys[m.t.Cursor()]
+}
+
+// refresh stores the latest external data and rebuilds the table.
+// Called by the parent on snapshotMsg and WindowSizeMsg.
+func (m *workloadViewModel) refresh(snap watcher.Snapshot, width, height int) {
+	m.snapshot = snap
+	m.width = width
+	m.height = height
+	m.rebuild()
+}
+
+// rebuild reconstructs the table from stored state. Called by refresh (external
+// data change) and cycleFilter (internal state change).
+func (m *workloadViewModel) rebuild() {
+	filtered := filterWorkloads(m.snapshot.Workloads, m.filter)
+	// Sort newest first.
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	cols := buildWorkloadColumns(m.isManagement, m.width)
+	rows, keys := buildWorkloadRows(filtered, m.isManagement)
+
+	prevKey := m.selectedWorkloadKey()
+
+	// Recreate via table.New so WithHeight sees the real column headers when
+	// computing viewport offset (same reasoning as queueViewModel.refresh).
+	m.t = table.New(
+		table.WithColumns(cols),
+		table.WithRows(rows),
+		table.WithHeight(m.height),
+		table.WithWidth(m.width),
+		table.WithFocused(true),
+		table.WithStyles(defaultTableStyles()),
+	)
+	m.workloadKeys = keys
+
+	// Restore cursor by key.
+	if prevKey != "" {
+		for i, k := range keys {
+			if k == prevKey {
+				m.t.SetCursor(i)
+				break
+			}
+		}
+	}
+}
+
+func filterWorkloads(workloads map[string]watcher.WorkloadSnapshot, f workloadFilter) []watcher.WorkloadSnapshot {
+	out := make([]watcher.WorkloadSnapshot, 0, len(workloads))
+	for _, wl := range workloads {
+		if f == filterAll || matchesFilter(wl.Status, f) {
+			out = append(out, wl)
+		}
+	}
+	return out
+}
+
+func matchesFilter(status watcher.WorkloadStatus, f workloadFilter) bool {
+	switch f {
+	case filterPending:
+		return status == watcher.WorkloadStatusPending
+	case filterQuotaReserved:
+		return status == watcher.WorkloadStatusQuotaReserved
+	case filterAdmitted:
+		return status == watcher.WorkloadStatusAdmitted
+	case filterFinished:
+		return status == watcher.WorkloadStatusFinished
+	case filterEvicted:
+		return status == watcher.WorkloadStatusEvicted
+	}
+	return true
+}
+
+func buildWorkloadColumns(isManagement bool, termWidth int) []table.Column {
+	cols := []table.Column{
+		{Title: "NAME", Width: wlColName},
+		{Title: "TYPE", Width: wlColType},
+		{Title: "QUEUE", Width: wlColQueue},
+		{Title: "STATUS", Width: wlColStatus},
+		{Title: "AGE", Width: wlColAge},
+		{Title: "RESOURCES", Width: wlColResources},
+	}
+	if isManagement {
+		// Only show DISPATCHED TO column if it fits.
+		fixed := wlColName + wlColType + wlColQueue + wlColStatus + wlColAge + wlColResources + 6
+		if termWidth-fixed >= wlColDispatchedTo {
+			cols = append(cols, table.Column{Title: "DISPATCHED TO", Width: wlColDispatchedTo})
+		}
+	}
+	return cols
+}
+
+func buildWorkloadRows(workloads []watcher.WorkloadSnapshot, isManagement bool) ([]table.Row, []string) {
+	rows := make([]table.Row, 0, len(workloads))
+	keys := make([]string, 0, len(workloads))
+
+	for _, wl := range workloads {
+		key := wl.Namespace + "/" + wl.Name
+		row := buildWorkloadRow(wl, isManagement)
+		rows = append(rows, row)
+		keys = append(keys, key)
+	}
+	return rows, keys
+}
+
+func buildWorkloadRow(wl watcher.WorkloadSnapshot, isManagement bool) table.Row {
+	ownerKind := wl.OwnerKind
+	if ownerKind == "" {
+		ownerKind = "–"
+	}
+
+	row := table.Row{
+		truncate(wl.Name, wlColName),
+		truncate(ownerKind, wlColType),
+		truncate(wl.Queue, wlColQueue),
+		renderWorkloadStatus(wl.Status),
+		fmtAge(wl.CreatedAt),
+		renderWorkloadResources(wl.Resources),
+	}
+
+	if isManagement {
+		dispatched := wl.DispatchedTo
+		if dispatched == "" {
+			dispatched = "–"
+		}
+		row = append(row, truncate(dispatched, wlColDispatchedTo))
+	}
+
+	return row
+}
+
+// renderWorkloadStatus returns a colored status string.
+func renderWorkloadStatus(s watcher.WorkloadStatus) string {
+	style := lipgloss.NewStyle().Foreground(colorNormal)
+	switch s {
+	case watcher.WorkloadStatusAdmitted:
+		style = lipgloss.NewStyle().Foreground(colorGreen)
+	case watcher.WorkloadStatusQuotaReserved:
+		style = lipgloss.NewStyle().Foreground(colorYellow)
+	case watcher.WorkloadStatusPending:
+		style = lipgloss.NewStyle().Foreground(colorSubtle)
+	case watcher.WorkloadStatusFinished:
+		style = lipgloss.NewStyle().Foreground(colorMuted)
+	case watcher.WorkloadStatusEvicted:
+		style = lipgloss.NewStyle().Foreground(colorRed)
+	}
+	return style.Render(truncate(string(s), wlColStatus))
+}
+
+// renderWorkloadResources renders all resources sorted by priority (GPU → CPU → Memory → other)
+// as a space-joined string, truncated to fit the column.
+func renderWorkloadResources(resources map[corev1.ResourceName]resource.Quantity) string {
+	if len(resources) == 0 {
+		return "–"
+	}
+
+	ordered := make([]corev1.ResourceName, 0, len(resources))
+	for rName := range resources {
+		ordered = append(ordered, rName)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		ri, rj := resourceRank(ordered[i]), resourceRank(ordered[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return ordered[i] < ordered[j]
+	})
+
+	parts := make([]string, 0, len(ordered))
+	for _, rName := range ordered {
+		q := resources[rName]
+		val := quantityValue(rName, q)
+		parts = append(parts, fmt.Sprintf("%d %s", val, shortResourceName(rName)))
+	}
+	return truncate(strings.Join(parts, " "), wlColResources)
+}
+
+func resourceRank(rName corev1.ResourceName) int {
+	s := strings.ToLower(string(rName))
+	switch {
+	case strings.Contains(s, "gpu"):
+		return 0
+	case rName == corev1.ResourceCPU:
+		return 1
+	case rName == corev1.ResourceMemory:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// fmtAge returns a human-readable age string (e.g. "2m", "1h3m", "4d").
+func fmtAge(t time.Time) string {
+	if t.IsZero() {
+		return "–"
+	}
+	d := time.Since(t)
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh%dm", h, m)
+	default:
+		days := int(d.Hours()) / 24
+		return fmt.Sprintf("%dd", days)
+	}
+}

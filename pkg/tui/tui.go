@@ -62,8 +62,9 @@ type Model struct {
 	detailView  tea.Model // nil when navLevel == navOverview
 
 	// Overview sub-views
-	queueView queueViewModel
-	eventView eventViewModel
+	queueView    queueViewModel
+	workloadView workloadViewModel
+	eventView    eventViewModel
 
 	// Terminal dimensions
 	width  int
@@ -112,6 +113,7 @@ func New(topologyName, clusterName string, meta topology.Metadata) (*Model, erro
 		connState:      stateConnecting,
 		keys:           defaultKeyMap,
 		queueView:      newQueueView(),
+		workloadView:   newWorkloadView(isManagement),
 		eventView:      newEventView(0, 0), // sized on first WindowSizeMsg
 	}, nil
 }
@@ -133,6 +135,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		mh, eh := m.panelHeights()
 		m.queueView.refresh(m.snapshot, m.width, mh)
+		m.workloadView.refresh(m.snapshot, m.width, mh)
 		m.eventView.refresh(m.snapshot, m.width, eh)
 		return m, nil
 
@@ -150,6 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width > 0 {
 			mh, eh := m.panelHeights()
 			m.queueView.refresh(m.snapshot, m.width, mh)
+			m.workloadView.refresh(m.snapshot, m.width, mh)
 			m.eventView.refresh(m.snapshot, m.width, eh)
 		}
 		return m, waitForUpdate(m.watcher.Store())
@@ -198,10 +202,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// At overview level, forward navigation keys to the active sub-view.
 	if m.navLevel == navOverview {
 		if key.Matches(msg, m.keys.Up) || key.Matches(msg, m.keys.Down) {
-			if m.overviewTab == tabQueues {
+			switch m.overviewTab {
+			case tabQueues:
 				cmd := m.queueView.update(msg)
 				return m, cmd
+			case tabWorkloads:
+				cmd := m.workloadView.update(msg)
+				return m, cmd
 			}
+		}
+		if key.Matches(msg, m.keys.Filter) && m.overviewTab == tabWorkloads {
+			m.workloadView.cycleFilter()
+			return m, nil
 		}
 		// Event log scrolling: pass scroll keys always (even when queue tab is active).
 		if isScrollKey(msg) {
@@ -252,7 +264,7 @@ func (m Model) View() tea.View {
 		case tabQueues:
 			mainContent = m.queueView.view()
 		case tabWorkloads:
-			mainContent = "  Workload view — coming in Commit 7"
+			mainContent = m.workloadView.view()
 		}
 		sep := eventSeparator(m.width)
 		eventContent := m.eventView.view()

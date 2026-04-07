@@ -77,6 +77,7 @@ func (q QueueSnapshot) deepCopy() QueueSnapshot {
 type WorkloadSnapshot struct {
 	Name         string
 	Namespace    string
+	OwnerKind    string         // owner reference Kind (e.g. "Job", "JobSet", "RayJob"); empty if none
 	Queue        string         // spec.queueName (LocalQueue)
 	ClusterQueue string         // status.admission.clusterQueue
 	Status       WorkloadStatus // derived from conditions

@@ -1,6 +1,9 @@
 package tui
 
-import "charm.land/lipgloss/v2"
+import (
+	"charm.land/bubbles/v2/table"
+	"charm.land/lipgloss/v2"
+)
 
 // Palette
 var (
@@ -53,6 +56,22 @@ var (
 	styleDisconnected = lipgloss.NewStyle().Foreground(colorRed)
 	styleSyncing      = lipgloss.NewStyle().Foreground(colorYellow)
 )
+
+// defaultTableStyles returns the shared lipgloss styles used by all overview tables.
+func defaultTableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(colorMuted).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(colorSubtle)
+	s.Selected = s.Selected.
+		Background(lipgloss.Color("237")).
+		Foreground(colorBright).
+		Bold(false)
+	return s
+}
 
 // utilizationStyle returns a lipgloss.Style based on used/nominal ratio.
 // Used in Commits 6-8 (queue/workload tables).

@@ -283,9 +283,18 @@ func (w *Watcher) upsertWorkload(obj interface{}) {
 }
 
 func buildWorkloadSnapshot(wl *kueuev1beta2.Workload) WorkloadSnapshot {
+	var ownerKind string
+	for _, ref := range wl.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller {
+			ownerKind = ref.Kind
+			break
+		}
+	}
+
 	snap := WorkloadSnapshot{
 		Name:      wl.Name,
 		Namespace: wl.Namespace,
+		OwnerKind: ownerKind,
 		Queue:     string(wl.Spec.QueueName),
 		Status:    deriveWorkloadStatus(wl.Status.Conditions),
 		CreatedAt: wl.CreationTimestamp.Time,

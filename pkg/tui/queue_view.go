@@ -33,7 +33,7 @@ type queueViewModel struct {
 func newQueueView() queueViewModel {
 	t := table.New(
 		table.WithFocused(true),
-		table.WithStyles(queueTableStyles()),
+		table.WithStyles(defaultTableStyles()),
 	)
 	return queueViewModel{t: t}
 }
@@ -81,7 +81,7 @@ func (m *queueViewModel) refresh(snap watcher.Snapshot, width, height int) {
 		table.WithHeight(height),
 		table.WithWidth(width),
 		table.WithFocused(true),
-		table.WithStyles(queueTableStyles()),
+		table.WithStyles(defaultTableStyles()),
 	)
 	m.queueNames = names
 
@@ -263,21 +263,6 @@ func primaryBorrowed(q watcher.QueueSnapshot, resources []corev1.ResourceName) i
 	return total
 }
 
-// queueTableStyles returns lipgloss styles for the queue table.
-func queueTableStyles() table.Styles {
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(colorMuted).
-		BorderBottom(true).
-		Bold(true).
-		Foreground(colorSubtle)
-	s.Selected = s.Selected.
-		Background(lipgloss.Color("237")).
-		Foreground(colorBright).
-		Bold(false)
-	return s
-}
 
 // truncate shortens s to max n runes, appending "…" if truncated.
 func truncate(s string, n int) string {
