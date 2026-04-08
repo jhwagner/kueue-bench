@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	barWidth     = 6 // number of block chars in utilization bar
-	colNameWidth = 20
+	barWidth     = 6  // number of block chars in utilization bar
+	colNameWidth = 20 // includes 2-char indicator prefix: "[glyph] name…"
 	colCohort    = 10
 	colPend      = 5
 	colAdm       = 5
@@ -51,19 +51,20 @@ func (m queueViewModel) view() string {
 // selectedQueueName returns the name of the currently highlighted ClusterQueue,
 // or "" if the table is empty.
 func (m queueViewModel) selectedQueueName() string {
-	row := m.t.SelectedRow()
-	if len(row) == 0 {
+	if len(m.queueNames) == 0 {
 		return ""
 	}
-	// First column is the queue name (may have cursor prefix stripped by table).
-	// The table stores the raw string we put in, so strip any leading whitespace.
-	return strings.TrimSpace(row[0])
+	cursor := m.t.Cursor()
+	if cursor < 0 || cursor >= len(m.queueNames) {
+		return ""
+	}
+	return m.queueNames[cursor]
 }
 
-// refresh rebuilds the table from scratch on each update. Recreating via
-// table.New() ensures WithHeight() sees the real column headers when computing
-// the internal viewport offset — calling SetHeight() on an existing model
-// before SetColumns() produces an incorrect header-height subtraction.
+// refresh rebuilds the table from scratch on each update. WithStyles must be
+// passed before WithHeight: WithHeight calls lipgloss.Height(headersView()) to
+// size the inner viewport, so the bordered header style must already be applied
+// when that measurement runs — otherwise the table renders one line too tall.
 func (m *queueViewModel) refresh(snap watcher.Snapshot, width, height int) {
 	m.resources = collectResources(snap)
 	// visibleResources is the subset that actually fits in the terminal.
@@ -78,10 +79,10 @@ func (m *queueViewModel) refresh(snap watcher.Snapshot, width, height int) {
 	m.t = table.New(
 		table.WithColumns(cols),
 		table.WithRows(rows),
+		table.WithStyles(defaultTableStyles()),
 		table.WithHeight(height),
 		table.WithWidth(width),
 		table.WithFocused(true),
-		table.WithStyles(defaultTableStyles()),
 	)
 	m.queueNames = names
 
@@ -183,8 +184,11 @@ func buildQueueRows(snap watcher.Snapshot, resources []corev1.ResourceName) ([]t
 }
 
 func buildQueueRow(q watcher.QueueSnapshot, resources []corev1.ResourceName) table.Row {
+	// Name cell: 2-char indicator prefix + name truncated to remaining width.
+	// "  " when no alert, "[glyph] " when a flavor is near/at capacity.
+	indicator := flavorIndicatorGlyph(worstFlavorRatio(q))
 	row := table.Row{
-		truncate(q.Name, colNameWidth),
+		indicator + " " + truncate(q.Name, colNameWidth-2),
 		truncate(q.Cohort, colCohort),
 		fmt.Sprintf("%d", q.Pending),
 		fmt.Sprintf("%d", q.Admitted),
@@ -212,11 +216,77 @@ func buildQueueRow(q watcher.QueueSnapshot, resources []corev1.ResourceName) tab
 	return row
 }
 
-// renderResourceCell returns "████░░ 32/40" with the bar colored by utilization ratio.
+// worstFlavorRatio returns the highest used/nominal ratio across all flavors and resources
+// in a queue. Used to decide whether to show the per-flavor capacity indicator.
+func worstFlavorRatio(q watcher.QueueSnapshot) float64 {
+	worst := 0.0
+	for _, fl := range q.Flavors {
+		for rName, rs := range fl.Resources {
+			nominal := quantityValue(rName, rs.Nominal)
+			if nominal <= 0 {
+				continue
+			}
+			ratio := float64(quantityValue(rName, rs.Used)) / float64(nominal)
+			if ratio > worst {
+				worst = ratio
+			}
+		}
+	}
+	return worst
+}
+
+// flavorIndicatorGlyph returns a colored 1-char glyph when any flavor is near/at capacity
+// (▲ ≥70%, ● ≥90%), or a plain space when utilization is below threshold.
+func flavorIndicatorGlyph(ratio float64) string {
+	switch {
+	case ratio >= 0.9:
+		return lipgloss.NewStyle().Foreground(colorRed).Render("●")
+	case ratio >= 0.7:
+		return lipgloss.NewStyle().Foreground(colorYellow).Render("▲")
+	default:
+		return " "
+	}
+}
+
+// flavorIndicatorLegend returns the hint text explaining the indicator glyphs.
+func flavorIndicatorLegend() string {
+	return "▲/● = flavor near/at capacity"
+}
+
+// renderQueueLegendLine renders a right-aligned legend footer for the queue
+// pane. Returns an empty string (still occupies one line in the layout) when
+// legend is "".
+func renderQueueLegendLine(width int, legend string) string {
+	if legend == "" {
+		return ""
+	}
+	legendWidth := lipgloss.Width(legend)
+	pad := width - legendWidth - 1
+	if pad < 0 {
+		pad = 0
+	}
+	return lipgloss.NewStyle().Foreground(colorMuted).Render(strings.Repeat(" ", pad) + legend)
+}
+
+// anyFlavorAtCapacity returns true if any ClusterQueue in the snapshot has at least
+// one flavor at or near capacity (worst ratio ≥ 0.7).
+func anyFlavorAtCapacity(snap watcher.Snapshot) bool {
+	for _, q := range snap.Queues {
+		if worstFlavorRatio(q) >= 0.7 {
+			return true
+		}
+	}
+	return false
+}
+
+// renderResourceCell returns "████░░ 32/40" with both the bar and the numbers colored by
+// utilization ratio. Coloring the numbers ensures the utilization level is visible even
+// when the bar is all-empty (low utilization), where block character color alone is subtle.
 // bubbles/table v2 uses ansi.Truncate (ANSI-aware), making per-cell lipgloss styling safe.
 func renderResourceCell(used, nominal int64) string {
+	style := utilizationStyle(used, nominal)
 	bar := renderBar(used, nominal, barWidth)
-	return utilizationStyle(used, nominal).Render(bar) + fmt.Sprintf(" %d/%d", used, nominal)
+	return style.Render(bar) + " " + style.Render(fmt.Sprintf("%d/%d", used, nominal))
 }
 
 // renderBar returns a string of block characters representing utilization.
@@ -262,7 +332,6 @@ func primaryBorrowed(q watcher.QueueSnapshot, resources []corev1.ResourceName) i
 	}
 	return total
 }
-
 
 // truncate shortens s to max n runes, appending "…" if truncated.
 func truncate(s string, n int) string {

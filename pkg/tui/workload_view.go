@@ -145,15 +145,16 @@ func (m *workloadViewModel) rebuild() {
 
 	prevKey := m.selectedWorkloadKey()
 
-	// Recreate via table.New so WithHeight sees the real column headers when
-	// computing viewport offset (same reasoning as queueViewModel.refresh).
+	// Recreate via table.New so WithStyles is applied before WithHeight;
+	// WithHeight calls lipgloss.Height(headersView()) to compute the header
+	// height, which must already include the border set by WithStyles.
 	m.t = table.New(
 		table.WithColumns(cols),
 		table.WithRows(rows),
-		table.WithHeight(m.height),
+		table.WithStyles(defaultTableStyles()),
+		table.WithHeight(m.height-1), // -1 for the filter label line rendered above the table
 		table.WithWidth(m.width),
 		table.WithFocused(true),
-		table.WithStyles(defaultTableStyles()),
 	)
 	m.workloadKeys = keys
 

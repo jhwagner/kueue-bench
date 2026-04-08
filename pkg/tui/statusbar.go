@@ -36,22 +36,19 @@ func renderTopBar(width int, topologyName, clusterName, clusterRole string, stat
 		sep +
 		styleStatusBar.Render(right)
 
-	// Pad to full width.
+	// Pad to full width. UnsetPadding keeps the status bar background color
+	// without applying styleStatusBar's Padding(0,1) to the fill characters.
 	visible := lipgloss.Width(content)
 	if visible < width {
-		content += styleStatusBar.Render(strings.Repeat(" ", width-visible))
+		content += styleStatusBar.UnsetPadding().Render(strings.Repeat(" ", width-visible))
 	}
 	return content
 }
 
-// renderHintBar renders the bottom key hint bar.
-func renderHintBar(width int, hints string) string {
-	content := styleHintBar.Render(hints)
-	visible := lipgloss.Width(content)
-	if visible < width {
-		content += styleHintBar.Render(strings.Repeat(" ", width-visible))
-	}
-	return content
+
+// renderHintSep renders a thin horizontal rule above the hint bar.
+func renderHintSep(width int) string {
+	return lipgloss.NewStyle().Foreground(colorMuted).Render(strings.Repeat("─", width))
 }
 
 func connectionIndicator(state connectionState) (indicator, label string) {

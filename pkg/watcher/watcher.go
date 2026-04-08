@@ -205,9 +205,30 @@ func buildQueueSnapshot(cq *kueuev1beta2.ClusterQueue) QueueSnapshot {
 			for _, rq := range fq.Resources {
 				rs := fm[rq.Name]
 				rs.Nominal = rq.NominalQuota.DeepCopy()
+				if rq.BorrowingLimit != nil {
+					q := rq.BorrowingLimit.DeepCopy()
+					rs.BorrowingLimit = &q
+				}
+				if rq.LendingLimit != nil {
+					q := rq.LendingLimit.DeepCopy()
+					rs.LendingLimit = &q
+				}
 				fm[rq.Name] = rs
 			}
 		}
+	}
+
+	if cq.Spec.Preemption != nil {
+		snap.Preemption.ReclaimWithinCohort = string(cq.Spec.Preemption.ReclaimWithinCohort)
+		snap.Preemption.WithinClusterQueue = string(cq.Spec.Preemption.WithinClusterQueue)
+		if cq.Spec.Preemption.BorrowWithinCohort != nil {
+			snap.Preemption.BorrowWithinCohort = string(cq.Spec.Preemption.BorrowWithinCohort.Policy)
+		}
+	}
+
+	if cq.Spec.FairSharing != nil && cq.Spec.FairSharing.Weight != nil {
+		w := cq.Spec.FairSharing.Weight.DeepCopy()
+		snap.FairSharingWeight = &w
 	}
 
 	for _, fu := range cq.Status.FlavorsReservation {

@@ -21,19 +21,30 @@ const (
 
 // ResourceSnapshot holds quota and usage for a single resource within a flavor.
 type ResourceSnapshot struct {
-	Nominal  resource.Quantity
-	Used     resource.Quantity // from status.flavorsUsage
-	Reserved resource.Quantity // from status.flavorsReservation
-	Borrowed resource.Quantity // from status.flavorsUsage[*].borrowed
+	Nominal        resource.Quantity
+	Used           resource.Quantity  // from status.flavorsUsage
+	Reserved       resource.Quantity  // from status.flavorsReservation
+	Borrowed       resource.Quantity  // from status.flavorsUsage[*].borrowed
+	BorrowingLimit *resource.Quantity // from spec; nil means no limit
+	LendingLimit   *resource.Quantity // from spec; nil means no limit
 }
 
 func (r ResourceSnapshot) deepCopy() ResourceSnapshot {
-	return ResourceSnapshot{
+	dst := ResourceSnapshot{
 		Nominal:  r.Nominal.DeepCopy(),
 		Used:     r.Used.DeepCopy(),
 		Reserved: r.Reserved.DeepCopy(),
 		Borrowed: r.Borrowed.DeepCopy(),
 	}
+	if r.BorrowingLimit != nil {
+		q := r.BorrowingLimit.DeepCopy()
+		dst.BorrowingLimit = &q
+	}
+	if r.LendingLimit != nil {
+		q := r.LendingLimit.DeepCopy()
+		dst.LendingLimit = &q
+	}
+	return dst
 }
 
 // FlavorSnapshot holds resource usage for a single ResourceFlavor within a ClusterQueue.
@@ -53,15 +64,25 @@ func (f FlavorSnapshot) deepCopy() FlavorSnapshot {
 	return dst
 }
 
+// PreemptionSnapshot holds the preemption policy settings of a ClusterQueue.
+// Empty string means the field was not set (defaults to "Never" in Kueue).
+type PreemptionSnapshot struct {
+	ReclaimWithinCohort string
+	BorrowWithinCohort  string
+	WithinClusterQueue  string
+}
+
 // QueueSnapshot is a point-in-time view of a ClusterQueue.
 type QueueSnapshot struct {
-	Name      string
-	Cohort    string
-	Pending   int32
-	Reserving int32
-	Admitted  int32
-	Active    bool // true when Active condition is True
-	Flavors   []FlavorSnapshot
+	Name              string
+	Cohort            string
+	Pending           int32
+	Reserving         int32
+	Admitted          int32
+	Active            bool // true when Active condition is True
+	Flavors           []FlavorSnapshot
+	Preemption        PreemptionSnapshot
+	FairSharingWeight *resource.Quantity // nil if not set
 }
 
 func (q QueueSnapshot) deepCopy() QueueSnapshot {
@@ -69,6 +90,10 @@ func (q QueueSnapshot) deepCopy() QueueSnapshot {
 	dst.Flavors = make([]FlavorSnapshot, len(q.Flavors))
 	for i, f := range q.Flavors {
 		dst.Flavors[i] = f.deepCopy()
+	}
+	if q.FairSharingWeight != nil {
+		w := q.FairSharingWeight.DeepCopy()
+		dst.FairSharingWeight = &w
 	}
 	return dst
 }

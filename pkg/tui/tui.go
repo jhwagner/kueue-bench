@@ -7,9 +7,18 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/jhwagner/kueue-bench/pkg/topology"
 	"github.com/jhwagner/kueue-bench/pkg/watcher"
+)
+
+// Chrome line counts for the overview layout.
+// Each constant names a group of fixed (non-content) lines.
+// panelHeights() subtracts these; View() must assemble exactly these lines.
+const (
+	chromeTopLines    = 3 // topBar + summaryBar + tabBar
+	chromeBottomLines = 4 // legendLine + eventSep + hintSep + hintBar
 )
 
 // navLevel tracks which view is active.
@@ -137,6 +146,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.queueView.refresh(m.snapshot, m.width, mh)
 		m.workloadView.refresh(m.snapshot, m.width, mh)
 		m.eventView.refresh(m.snapshot, m.width, eh)
+		if m.navLevel == navDetail && m.detailView != nil {
+			var cmd tea.Cmd
+			m.detailView, cmd = m.detailView.Update(msg)
+			_ = cmd
+		}
 		return m, nil
 
 	case syncDoneMsg:
@@ -155,6 +169,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueView.refresh(m.snapshot, m.width, mh)
 			m.workloadView.refresh(m.snapshot, m.width, mh)
 			m.eventView.refresh(m.snapshot, m.width, eh)
+		}
+		if m.navLevel == navDetail && m.detailView != nil {
+			var cmd tea.Cmd
+			m.detailView, cmd = m.detailView.Update(msg)
+			_ = cmd
 		}
 		return m, waitForUpdate(m.watcher.Store())
 
@@ -197,6 +216,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.overviewTab = tabWorkloads
 		}
 		return m, nil
+
+	case key.Matches(msg, m.keys.Enter):
+		if m.navLevel == navOverview && m.overviewTab == tabQueues {
+			name := m.queueView.selectedQueueName()
+			if name != "" {
+				detail := newQueueDetail(name, m.snapshot, m.width, m.height-2)
+				m.navLevel = navDetail
+				m.detailView = detail
+			}
+		}
+		return m, nil
 	}
 
 	// At overview level, forward navigation keys to the active sub-view.
@@ -220,6 +250,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			cmd := m.eventView.update(msg)
 			return m, cmd
 		}
+	}
+
+	// Forward remaining keys to detail view when active.
+	if m.navLevel == navDetail && m.detailView != nil {
+		var cmd tea.Cmd
+		m.detailView, cmd = m.detailView.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -251,7 +288,7 @@ func (m Model) View() tea.View {
 	} else {
 		hints = overviewHints(m.overviewTab)
 	}
-	hintBar := renderHintBar(m.width, hints)
+	hintBar := styleHintBar.Width(m.width).Render(hints)
 
 	var content string
 	if m.navLevel == navDetail && m.detailView != nil {
@@ -266,15 +303,25 @@ func (m Model) View() tea.View {
 		case tabWorkloads:
 			mainContent = m.workloadView.view()
 		}
+
+		// Legend footer for the queue pane: shown when any flavor is near/at
+		// capacity. Always occupies one line to keep the layout stable.
+		var legend string
+		if m.overviewTab == tabQueues && anyFlavorAtCapacity(m.snapshot) {
+			legend = flavorIndicatorLegend()
+		}
+		legendLine := renderQueueLegendLine(m.width, legend)
+
 		sep := eventSeparator(m.width)
 		eventContent := m.eventView.view()
-		content = topBar + "\n" +
-			summaryBar + "\n" +
-			tabBar + "\n" +
-			mainContent + "\n" +
-			sep + "\n" +
-			eventContent + "\n" +
-			hintBar
+		hintSep := renderHintSep(m.width)
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			topBar, summaryBar, tabBar,
+			mainContent,
+			legendLine, sep,
+			eventContent,
+			hintSep, hintBar,
+		)
 	}
 
 	v := tea.NewView(content)
@@ -283,10 +330,9 @@ func (m Model) View() tea.View {
 }
 
 // panelHeights returns (mainHeight, eventHeight) for the current terminal size.
-// Layout: topBar(1) + summaryBar(1) + tabBar(1) + mainPanel + sep(1) + eventPanel + hintBar(1) = height
-// → mainPanel + eventPanel = height - 5
+// available = height - chromeTopLines - chromeBottomLines
 func (m Model) panelHeights() (mainH, eventH int) {
-	available := m.height - 5 // 5 fixed lines: top + summary + tab + sep + hint
+	available := m.height - chromeTopLines - chromeBottomLines
 	if available < 4 {
 		available = 4
 	}
