@@ -29,6 +29,9 @@ var (
 
 	//go:embed stages/pod-complete-manual.yaml
 	podCompleteManualStage []byte
+
+	//go:embed stages/pod-simulate-failure.yaml
+	podSimulateFailureStage []byte
 )
 
 // installStages applies all embedded Kwok stages to the cluster.
@@ -42,6 +45,7 @@ func installStages(ctx context.Context, dynamicClient dynamic.Interface,
 		podDeleteStage,
 		podCompleteTimedStage,
 		podCompleteManualStage,
+		podSimulateFailureStage,
 	}
 
 	for _, stage := range stages {

@@ -333,6 +333,17 @@ func primaryBorrowed(q watcher.QueueSnapshot, resources []corev1.ResourceName) i
 	return total
 }
 
+// sortResourceNames sorts a slice of resource names by priority order (cpu, memory, gpu, then alpha).
+func sortResourceNames(names []corev1.ResourceName) {
+	sort.Slice(names, func(i, j int) bool {
+		ri, rj := resourceRank(names[i]), resourceRank(names[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return names[i] < names[j]
+	})
+}
+
 // truncate shortens s to max n runes, appending "…" if truncated.
 func truncate(s string, n int) string {
 	runes := []rune(s)

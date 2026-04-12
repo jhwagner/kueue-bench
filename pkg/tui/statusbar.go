@@ -45,7 +45,6 @@ func renderTopBar(width int, topologyName, clusterName, clusterRole string, stat
 	return content
 }
 
-
 // renderHintSep renders a thin horizontal rule above the hint bar.
 func renderHintSep(width int) string {
 	return lipgloss.NewStyle().Foreground(colorMuted).Render(strings.Repeat("─", width))

@@ -98,18 +98,45 @@ func (q QueueSnapshot) deepCopy() QueueSnapshot {
 	return dst
 }
 
+// PodSetSnapshot holds resource requests for a single pod set (per-pod, not multiplied).
+type PodSetSnapshot struct {
+	Name      string
+	Count     int32
+	Resources map[corev1.ResourceName]resource.Quantity // per-pod container requests summed
+}
+
+func (p PodSetSnapshot) deepCopy() PodSetSnapshot {
+	dst := PodSetSnapshot{
+		Name:      p.Name,
+		Count:     p.Count,
+		Resources: make(map[corev1.ResourceName]resource.Quantity, len(p.Resources)),
+	}
+	for k, v := range p.Resources {
+		dst.Resources[k] = v.DeepCopy()
+	}
+	return dst
+}
+
 // WorkloadSnapshot is a point-in-time view of a Kueue Workload.
 type WorkloadSnapshot struct {
-	Name         string
-	Namespace    string
-	OwnerKind    string         // owner reference Kind (e.g. "Job", "JobSet", "RayJob"); empty if none
-	Queue        string         // spec.queueName (LocalQueue)
-	ClusterQueue string         // status.admission.clusterQueue
-	Status       WorkloadStatus // derived from conditions
-	CreatedAt    time.Time
+	Name          string
+	Namespace     string
+	OwnerKind     string         // owner reference Kind (e.g. "Job", "JobSet", "RayJob"); empty if none
+	OwnerName     string         // owner reference Name (e.g. "my-job"); pairs with OwnerKind
+	Queue         string         // spec.queueName (LocalQueue)
+	ClusterQueue  string         // status.admission.clusterQueue
+	Status        WorkloadStatus // derived from conditions
+	CreatedAt     time.Time
+	Priority      int32  // spec.priority; 0 if unset
+	PriorityClass string // spec.priorityClassRef.name; "" if unset
+	RequeueCount  int32  // status.requeueState.count; 0 if never requeued
 	// Resources is the aggregated resource requests across all pod sets
 	// (requests-per-pod × replicas, summed across pod sets).
 	Resources map[corev1.ResourceName]resource.Quantity
+	// PodSets holds per-pod-set resource breakdowns (per-pod, not multiplied by count).
+	PodSets []PodSetSnapshot
+	// Conditions is the raw workload status conditions for timeline rendering.
+	Conditions []metav1.Condition
 	// DispatchedTo is the MultiKueue worker cluster name; empty for non-MultiKueue workloads.
 	DispatchedTo string
 }
@@ -120,6 +147,12 @@ func (w WorkloadSnapshot) deepCopy() WorkloadSnapshot {
 	for k, v := range w.Resources {
 		dst.Resources[k] = v.DeepCopy()
 	}
+	dst.PodSets = make([]PodSetSnapshot, len(w.PodSets))
+	for i, ps := range w.PodSets {
+		dst.PodSets[i] = ps.deepCopy()
+	}
+	dst.Conditions = make([]metav1.Condition, len(w.Conditions))
+	copy(dst.Conditions, w.Conditions)
 	return dst
 }
 

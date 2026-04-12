@@ -304,22 +304,39 @@ func (w *Watcher) upsertWorkload(obj interface{}) {
 }
 
 func buildWorkloadSnapshot(wl *kueuev1beta2.Workload) WorkloadSnapshot {
-	var ownerKind string
+	var ownerKind, ownerName string
 	for _, ref := range wl.OwnerReferences {
 		if ref.Controller != nil && *ref.Controller {
 			ownerKind = ref.Kind
+			ownerName = ref.Name
 			break
 		}
 	}
 
+	conditions := make([]metav1.Condition, len(wl.Status.Conditions))
+	copy(conditions, wl.Status.Conditions)
+
 	snap := WorkloadSnapshot{
-		Name:      wl.Name,
-		Namespace: wl.Namespace,
-		OwnerKind: ownerKind,
-		Queue:     string(wl.Spec.QueueName),
-		Status:    deriveWorkloadStatus(wl.Status.Conditions),
-		CreatedAt: wl.CreationTimestamp.Time,
-		Resources: aggregatePodSetResources(wl.Spec.PodSets),
+		Name:       wl.Name,
+		Namespace:  wl.Namespace,
+		OwnerKind:  ownerKind,
+		OwnerName:  ownerName,
+		Queue:      string(wl.Spec.QueueName),
+		Status:     deriveWorkloadStatus(wl.Status.Conditions),
+		CreatedAt:  wl.CreationTimestamp.Time,
+		Resources:  aggregatePodSetResources(wl.Spec.PodSets),
+		PodSets:    buildPodSetSnapshots(wl.Spec.PodSets),
+		Conditions: conditions,
+	}
+
+	if wl.Spec.Priority != nil {
+		snap.Priority = *wl.Spec.Priority
+	}
+	if wl.Spec.PriorityClassRef != nil {
+		snap.PriorityClass = wl.Spec.PriorityClassRef.Name
+	}
+	if wl.Status.RequeueState != nil && wl.Status.RequeueState.Count != nil {
+		snap.RequeueCount = *wl.Status.RequeueState.Count
 	}
 
 	if wl.Status.Admission != nil {
@@ -331,6 +348,20 @@ func buildWorkloadSnapshot(wl *kueuev1beta2.Workload) WorkloadSnapshot {
 	}
 
 	return snap
+}
+
+// buildPodSetSnapshots extracts effective per-pod resource requests for each pod set.
+// Resources are NOT multiplied by pod count.
+func buildPodSetSnapshots(podSets []kueuev1beta2.PodSet) []PodSetSnapshot {
+	out := make([]PodSetSnapshot, 0, len(podSets))
+	for _, ps := range podSets {
+		out = append(out, PodSetSnapshot{
+			Name:      string(ps.Name),
+			Count:     ps.Count,
+			Resources: effectivePodRequests(ps.Template.Spec),
+		})
+	}
+	return out
 }
 
 // deriveWorkloadStatus applies condition precedence per the plan:
@@ -359,8 +390,44 @@ func deriveWorkloadStatus(conditions []metav1.Condition) WorkloadStatus {
 	}
 }
 
+// effectivePodRequests returns the effective resource requests for a single pod,
+// matching the Kubernetes scheduler's accounting:
+//   - regular containers: sum of all container requests
+//   - init containers: each runs alone, so only the largest per resource matters
+//   - effective = max(any single init container, sum of regular containers) per resource
+func effectivePodRequests(spec corev1.PodSpec) map[corev1.ResourceName]resource.Quantity {
+	result := make(map[corev1.ResourceName]resource.Quantity)
+
+	// Sum regular containers.
+	for _, c := range spec.Containers {
+		for rName, rQty := range c.Resources.Requests {
+			if existing, ok := result[rName]; ok {
+				existing.Add(rQty)
+				result[rName] = existing
+			} else {
+				result[rName] = rQty.DeepCopy()
+			}
+		}
+	}
+
+	// Take the max of each init container vs the running sum.
+	for _, ic := range spec.InitContainers {
+		for rName, rQty := range ic.Resources.Requests {
+			if existing, ok := result[rName]; ok {
+				if rQty.Cmp(existing) > 0 {
+					result[rName] = rQty.DeepCopy()
+				}
+			} else {
+				result[rName] = rQty.DeepCopy()
+			}
+		}
+	}
+
+	return result
+}
+
 // aggregatePodSetResources sums resource requests across all pod sets:
-// total = sum over pod sets of (container requests × pod count).
+// total = sum over pod sets of (effective per-pod requests × pod count).
 func aggregatePodSetResources(podSets []kueuev1beta2.PodSet) map[corev1.ResourceName]resource.Quantity {
 	totals := make(map[corev1.ResourceName]resource.Quantity)
 
@@ -370,16 +437,14 @@ func aggregatePodSetResources(podSets []kueuev1beta2.PodSet) map[corev1.Resource
 			count = 1
 		}
 
-		for _, c := range ps.Template.Spec.Containers {
-			for rName, rQty := range c.Resources.Requests {
-				q := rQty.DeepCopy()
-				q.Mul(count)
-				if existing, ok := totals[rName]; ok {
-					existing.Add(q)
-					totals[rName] = existing
-				} else {
-					totals[rName] = q
-				}
+		for rName, rQty := range effectivePodRequests(ps.Template.Spec) {
+			q := rQty.DeepCopy()
+			q.Mul(count)
+			if existing, ok := totals[rName]; ok {
+				existing.Add(q)
+				totals[rName] = existing
+			} else {
+				totals[rName] = q
 			}
 		}
 	}

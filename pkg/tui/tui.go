@@ -218,12 +218,22 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Enter):
-		if m.navLevel == navOverview && m.overviewTab == tabQueues {
-			name := m.queueView.selectedQueueName()
-			if name != "" {
-				detail := newQueueDetail(name, m.snapshot, m.width, m.height-2)
-				m.navLevel = navDetail
-				m.detailView = detail
+		if m.navLevel == navOverview {
+			switch m.overviewTab {
+			case tabQueues:
+				name := m.queueView.selectedQueueName()
+				if name != "" {
+					detail := newQueueDetail(name, m.snapshot, m.width, m.height-2)
+					m.navLevel = navDetail
+					m.detailView = detail
+				}
+			case tabWorkloads:
+				wlKey := m.workloadView.selectedWorkloadKey()
+				if wlKey != "" {
+					detail := newWorkloadDetail(wlKey, m.isManagement, m.snapshot, m.width, m.height-2)
+					m.navLevel = navDetail
+					m.detailView = detail
+				}
 			}
 		}
 		return m, nil

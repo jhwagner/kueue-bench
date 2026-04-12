@@ -1,0 +1,50 @@
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-simulate-failure
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+    - key: .metadata.deletionTimestamp
+      operator: DoesNotExist
+    - key: .status.phase
+      operator: In
+      values:
+      - Running
+    - key: '.metadata.annotations["simulate-failure.kwok.x-k8s.io/enabled"]'
+      operator: Exists
+  delay:
+    durationMilliseconds: 5000
+    durationFrom:
+      expressionFrom: '.metadata.annotations["simulate-failure.kwok.x-k8s.io/delay"]'
+    jitterDurationMilliseconds: 2000
+    jitterDurationFrom:
+      expressionFrom: '.metadata.annotations["simulate-failure.kwok.x-k8s.io/jitter"]'
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: SimulatedFailure
+        type: Ready
+      containerStatuses:
+      {{ range $index, $item := .spec.containers }}
+      - image: {{ $item.image | Quote }}
+        name: {{ $item.name | Quote }}
+        ready: false
+        restartCount: 0
+        started: false
+        state:
+          terminated:
+            exitCode: 1
+            finishedAt: {{ $now | Quote }}
+            reason: Error
+            message: "Simulated failure via simulate-failure.kwok.x-k8s.io/enabled"
+            startedAt: {{ $now | Quote }}
+      {{ end }}
+      phase: Failed

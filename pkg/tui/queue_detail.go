@@ -244,13 +244,7 @@ func sortedFlavorResources(fl watcher.FlavorSnapshot) []corev1.ResourceName {
 	for rName := range fl.Resources {
 		names = append(names, rName)
 	}
-	sort.Slice(names, func(i, j int) bool {
-		ri, rj := resourceRank(names[i]), resourceRank(names[j])
-		if ri != rj {
-			return ri < rj
-		}
-		return names[i] < names[j]
-	})
+	sortResourceNames(names)
 	return names
 }
 

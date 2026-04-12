@@ -68,3 +68,7 @@ spec:
       operator: DoesNotExist
     - key: .status.podIP
       operator: DoesNotExist
+    # Pods annotated with stuck-pending.kwok.x-k8s.io/enabled will never
+    # advance to Running — they remain in Pending indefinitely.
+    - key: '.metadata.annotations["stuck-pending.kwok.x-k8s.io/enabled"]'
+      operator: DoesNotExist
