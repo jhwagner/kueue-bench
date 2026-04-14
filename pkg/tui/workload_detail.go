@@ -105,10 +105,10 @@ func (m workloadDetailModel) buildContent(snap watcher.Snapshot) string {
 		sb.WriteString("\n\n")
 	}
 
-	// Pods (stub)
+	// Pods
 	sb.WriteString(renderDetailSectionHeader("Pods", m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderWorkloadPods())
+	sb.WriteString(renderWorkloadPods(wl, snap.Pods))
 
 	return sb.String()
 }
@@ -373,8 +373,138 @@ func renderWorkloadMultiKueue(wl watcher.WorkloadSnapshot) string {
 	return row
 }
 
-func renderWorkloadPods() string {
-	return styleMuted.Render("  pod tracking not yet available  (coming soon)")
+func renderWorkloadPods(wl watcher.WorkloadSnapshot, pods map[string]watcher.PodSnapshot) string {
+	// Unknown owner kind — no label selector available.
+	if watcher.PodLabelSelector(wl.OwnerKind, wl.OwnerName) == "" {
+		if wl.OwnerKind == "" {
+			return styleMuted.Render("  pod tracking not available (no owner)")
+		}
+		return styleMuted.Render(fmt.Sprintf("  pod tracking not available for %s workloads", wl.OwnerKind))
+	}
+
+	// Empty state depends on workload admission status.
+	if len(pods) == 0 {
+		switch wl.Status {
+		case watcher.WorkloadStatusAdmitted:
+			return styleMuted.Render("  waiting for pods...")
+		case watcher.WorkloadStatusFinished:
+			return styleMuted.Render("  no pods (completed pods may have been cleaned up)")
+		default:
+			return styleMuted.Render("  no pods (workload not yet admitted)")
+		}
+	}
+
+	// Phase counts.
+	var running, pending, failed, succeeded int
+	for _, p := range pods {
+		switch p.Phase {
+		case corev1.PodRunning:
+			running++
+		case corev1.PodPending:
+			pending++
+		case corev1.PodFailed:
+			failed++
+		case corev1.PodSucceeded:
+			succeeded++
+		}
+	}
+
+	styleRunning := lipgloss.NewStyle().Foreground(colorGreen)
+	stylePending := lipgloss.NewStyle().Foreground(colorYellow)
+	styleFailed := lipgloss.NewStyle().Foreground(colorRed)
+
+	summary := fmt.Sprintf("  %s  %s  %s  %s",
+		styleRunning.Render(fmt.Sprintf("%d Running", running)),
+		stylePending.Render(fmt.Sprintf("%d Pending", pending)),
+		styleFailed.Render(fmt.Sprintf("%d Failed", failed)),
+		styleMuted.Render(fmt.Sprintf("%d Succeeded", succeeded)),
+	)
+
+	// Collect problem pods.
+	now := time.Now()
+	var problems []watcher.PodSnapshot
+	for _, p := range pods {
+		if isProblemPod(p, now) {
+			problems = append(problems, p)
+		}
+	}
+
+	if len(problems) == 0 {
+		return summary
+	}
+
+	// Sort: Failed > Unknown > Pending > Running, then name.
+	phaseSeverity := func(phase corev1.PodPhase) int {
+		switch phase {
+		case corev1.PodFailed:
+			return 0
+		case corev1.PodUnknown:
+			return 1
+		case corev1.PodPending:
+			return 2
+		case corev1.PodRunning:
+			return 3
+		}
+		return 4
+	}
+	sort.Slice(problems, func(i, j int) bool {
+		si, sj := phaseSeverity(problems[i].Phase), phaseSeverity(problems[j].Phase)
+		if si != sj {
+			return si < sj
+		}
+		return problems[i].Name < problems[j].Name
+	})
+
+	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
+	hdr := fmt.Sprintf("  %-40s  %-10s  %-8s  %s", "NAME", "PHASE", "AGE", "MESSAGE")
+
+	var sb strings.Builder
+	sb.WriteString(summary)
+	sb.WriteString("\n\n")
+	sb.WriteString(styleMuted.Render("  PROBLEM PODS"))
+	sb.WriteString("\n")
+	sb.WriteString(styleHdr.Render(hdr))
+	sb.WriteString("\n")
+	sb.WriteString(styleMuted.Render(strings.Repeat("─", len(hdr))))
+	sb.WriteString("\n")
+
+	for _, p := range problems {
+		age := fmtAge(p.CreatedAt)
+		phaseStr := string(p.Phase)
+		var phaseRendered string
+		switch p.Phase {
+		case corev1.PodFailed, corev1.PodUnknown:
+			phaseRendered = lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("%-10s", phaseStr))
+		case corev1.PodPending:
+			phaseRendered = lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("%-10s", phaseStr))
+		default:
+			phaseRendered = fmt.Sprintf("%-10s", phaseStr)
+		}
+		msgRendered := styleMuted.Render(truncate(p.Message, 60))
+		row := fmt.Sprintf("  %-40s  %s  %-8s  %s",
+			truncate(p.Name, 40),
+			phaseRendered,
+			age,
+			msgRendered,
+		)
+		sb.WriteString(row)
+		sb.WriteString("\n")
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func isProblemPod(p watcher.PodSnapshot, now time.Time) bool {
+	age := now.Sub(p.CreatedAt)
+	switch p.Phase {
+	case corev1.PodFailed, corev1.PodUnknown:
+		return true
+	case corev1.PodPending:
+		return age > 30*time.Second
+	case corev1.PodRunning:
+		return !p.Ready && age > 30*time.Second
+	}
+	return false
 }
 
 // --- Helpers -----------------------------------------------------------------

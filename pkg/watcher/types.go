@@ -179,10 +179,34 @@ func (m MultiKueueClusterSnapshot) deepCopy() MultiKueueClusterSnapshot {
 	return dst
 }
 
+// PodSnapshot is a point-in-time view of a Pod relevant to workload tracking.
+type PodSnapshot struct {
+	Name      string
+	Namespace string
+	Phase     corev1.PodPhase // Running, Pending, Succeeded, Failed, Unknown
+	Ready     bool            // all containers ready
+	OwnerKind string          // immediate owner Kind (e.g. "Job")
+	OwnerName string          // immediate owner Name
+	CreatedAt time.Time
+	StartTime *time.Time // pod start time; nil if not yet scheduled
+	// Message is a diagnostic summary for problem pods. Empty for healthy pods.
+	Message string
+}
+
+func (p PodSnapshot) deepCopy() PodSnapshot {
+	dst := p
+	if p.StartTime != nil {
+		t := *p.StartTime
+		dst.StartTime = &t
+	}
+	return dst
+}
+
 // Snapshot is the aggregated cluster state at a point in time.
 type Snapshot struct {
 	Queues             map[string]QueueSnapshot             // key: ClusterQueue name
 	Workloads          map[string]WorkloadSnapshot          // key: "namespace/name"
 	MultiKueueClusters map[string]MultiKueueClusterSnapshot // key: cluster name
 	Events             []EventEntry                         // ordered oldest → newest, capped at 500
+	Pods               map[string]PodSnapshot               // key: "namespace/name"; scoped to active detail view
 }

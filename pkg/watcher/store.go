@@ -11,6 +11,7 @@ type Store struct {
 	queues             map[string]QueueSnapshot
 	workloads          map[string]WorkloadSnapshot // key: "namespace/name"
 	multiKueueClusters map[string]MultiKueueClusterSnapshot
+	pods               map[string]PodSnapshot // key: "namespace/name"; scoped to active detail view
 
 	// ring buffer for events
 	eventBuf  [eventBufCap]EventEntry
@@ -28,6 +29,7 @@ func NewStore() *Store {
 		queues:             make(map[string]QueueSnapshot),
 		workloads:          make(map[string]WorkloadSnapshot),
 		multiKueueClusters: make(map[string]MultiKueueClusterSnapshot),
+		pods:               make(map[string]PodSnapshot),
 		updateCh:           make(chan struct{}, 1),
 	}
 }
@@ -48,6 +50,7 @@ func (s *Store) Snapshot() Snapshot {
 		Workloads:          make(map[string]WorkloadSnapshot, len(s.workloads)),
 		MultiKueueClusters: make(map[string]MultiKueueClusterSnapshot, len(s.multiKueueClusters)),
 		Events:             make([]EventEntry, s.eventSize),
+		Pods:               make(map[string]PodSnapshot, len(s.pods)),
 	}
 
 	for k, v := range s.queues {
@@ -58,6 +61,9 @@ func (s *Store) Snapshot() Snapshot {
 	}
 	for k, v := range s.multiKueueClusters {
 		snap.MultiKueueClusters[k] = v.deepCopy()
+	}
+	for k, v := range s.pods {
+		snap.Pods[k] = v.deepCopy()
 	}
 
 	// Copy ring buffer in order: oldest → newest
@@ -127,6 +133,32 @@ func (s *Store) AppendEvent(e EventEntry) {
 	if s.eventSize < eventBufCap {
 		s.eventSize++
 	}
+	s.mu.Unlock()
+	s.signal()
+}
+
+// UpsertPod inserts or replaces a Pod snapshot.
+func (s *Store) UpsertPod(p PodSnapshot) {
+	key := p.Namespace + "/" + p.Name
+	s.mu.Lock()
+	s.pods[key] = p
+	s.mu.Unlock()
+	s.signal()
+}
+
+// DeletePod removes a Pod snapshot by namespace and name.
+func (s *Store) DeletePod(namespace, name string) {
+	key := namespace + "/" + name
+	s.mu.Lock()
+	delete(s.pods, key)
+	s.mu.Unlock()
+	s.signal()
+}
+
+// ClearPods removes all pod snapshots; used when tearing down a scoped pod informer.
+func (s *Store) ClearPods() {
+	s.mu.Lock()
+	s.pods = make(map[string]PodSnapshot)
 	s.mu.Unlock()
 	s.signal()
 }

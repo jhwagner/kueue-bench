@@ -47,6 +47,11 @@ type syncDoneMsg struct {
 	err error
 }
 
+// podWatchReadyMsg signals that StartPodWatch completed (or failed).
+type podWatchReadyMsg struct {
+	err error
+}
+
 // Model is the root BubbleTea model.
 type Model struct {
 	// Topology
@@ -162,6 +167,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case podWatchReadyMsg:
+		if msg.err != nil {
+			m.statusErr = "pod watch: " + msg.err.Error()
+		}
+		return m, nil
+
 	case snapshotMsg:
 		m.snapshot = msg.snap
 		if m.width > 0 {
@@ -200,6 +211,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Esc):
 		if m.navLevel == navDetail {
+			m.watcher.StopPodWatch()
 			m.navLevel = navOverview
 			m.detailView = nil
 		}
@@ -233,6 +245,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					detail := newWorkloadDetail(wlKey, m.isManagement, m.snapshot, m.width, m.height-2)
 					m.navLevel = navDetail
 					m.detailView = detail
+					var podCmd tea.Cmd
+					if wl, ok := m.snapshot.Workloads[wlKey]; ok {
+						if sel := watcher.PodLabelSelector(wl.OwnerKind, wl.OwnerName); sel != "" {
+							podCmd = startPodWatch(m.watcherCtx, m.watcher, wl.Namespace, sel)
+						}
+					}
+					return m, podCmd
 				}
 			}
 		}
@@ -375,6 +394,14 @@ func waitForUpdate(store *watcher.Store) tea.Cmd {
 	return func() tea.Msg {
 		<-store.UpdateCh()
 		return snapshotMsg{snap: store.Snapshot()}
+	}
+}
+
+// startPodWatch starts a scoped pod informer and signals podWatchReadyMsg on completion.
+func startPodWatch(ctx context.Context, w *watcher.Watcher, namespace, labelSelector string) tea.Cmd {
+	return func() tea.Msg {
+		err := w.StartPodWatch(ctx, namespace, labelSelector)
+		return podWatchReadyMsg{err: err}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,11 +24,17 @@ import (
 // the Store. It is not safe to call Start more than once.
 type Watcher struct {
 	store        *Store
+	k8sClient    kubernetes.Interface
 	kueueFactory externalversions.SharedInformerFactory
 	coreFactory  coreinformers.SharedInformerFactory
 	isManagement bool
 	connected    atomic.Bool
 	stopCh       chan struct{}
+
+	// Scoped pod informer — started on demand when a workload detail view opens.
+	podMu      sync.Mutex
+	podCancel  context.CancelFunc
+	podFactory coreinformers.SharedInformerFactory
 }
 
 // New builds a Watcher connected to the cluster at kubeconfigPath. It does not
@@ -49,6 +56,7 @@ func New(kubeconfigPath string, isManagement bool) (*Watcher, error) {
 
 	return &Watcher{
 		store:        NewStore(),
+		k8sClient:    k8sClient,
 		kueueFactory: externalversions.NewSharedInformerFactory(kueueClient, 0),
 		coreFactory:  coreinformers.NewSharedInformerFactory(k8sClient, 0),
 		isManagement: isManagement,
@@ -546,4 +554,211 @@ func buildMultiKueueClusterSnapshot(mkc *kueuev1beta2.MultiKueueCluster) MultiKu
 	}
 
 	return snap
+}
+
+// --- Scoped pod informer -----------------------------------------------------
+
+// PodLabelSelector returns the label selector string for finding pods owned
+// by the given workload type. Returns "" if the owner kind is not recognized.
+func PodLabelSelector(ownerKind, ownerName string) string {
+	switch ownerKind {
+	case "Job":
+		return "batch.kubernetes.io/job-name=" + ownerName
+	case "JobSet":
+		return "jobset.sigs.k8s.io/jobset-name=" + ownerName
+	default:
+		return ""
+	}
+}
+
+// StartPodWatch begins watching pods matching labelSelector in namespace.
+// Only one pod watch is active at a time; a running watch is stopped first.
+// Blocks until the pod informer has synced or ctx is cancelled.
+//
+// podCancel/podFactory are stored under the lock before it is released, so
+// StopPodWatch (called from the UI event loop) can always cancel an in-flight
+// sync without deadlocking. WaitForCacheSync runs without the lock held.
+func (w *Watcher) StartPodWatch(ctx context.Context, namespace, labelSelector string) error {
+	w.podMu.Lock()
+
+	if w.podCancel != nil {
+		w.podCancel()
+		prev := w.podFactory
+		go prev.Shutdown() // drain off the lock; doesn't touch shared state
+		w.store.ClearPods()
+		w.podCancel = nil
+		w.podFactory = nil
+	}
+
+	podCtx, cancel := context.WithCancel(ctx)
+
+	// Bridge context cancellation to the stop channel the factory needs.
+	stopCh := make(chan struct{})
+	go func() {
+		<-podCtx.Done()
+		close(stopCh)
+	}()
+
+	factory := coreinformers.NewSharedInformerFactoryWithOptions(
+		w.k8sClient, 0,
+		coreinformers.WithNamespace(namespace),
+		coreinformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.LabelSelector = labelSelector
+		}),
+	)
+
+	podInformer := factory.Core().V1().Pods().Informer()
+	if _, err := podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { w.upsertPod(obj) },
+		UpdateFunc: func(_, newObj interface{}) { w.upsertPod(newObj) },
+		DeleteFunc: func(obj interface{}) {
+			if pod, ok := extractObj[corev1.Pod](obj); ok {
+				w.store.DeletePod(pod.Namespace, pod.Name)
+			}
+		},
+	}); err != nil {
+		w.podMu.Unlock()
+		cancel()
+		return fmt.Errorf("add pod event handler: %w", err)
+	}
+
+	factory.Start(stopCh)
+
+	// Store under the lock before releasing it. StopPodWatch (or a concurrent
+	// StartPodWatch) can now safely cancel this watch at any point, including
+	// while WaitForCacheSync is running below.
+	w.podCancel = cancel
+	w.podFactory = factory
+	w.podMu.Unlock()
+
+	synced := factory.WaitForCacheSync(stopCh)
+	for _, ok := range synced {
+		if !ok {
+			if podCtx.Err() != nil {
+				return nil // cancelled by StopPodWatch — not an error
+			}
+			return fmt.Errorf("pod cache sync failed")
+		}
+	}
+
+	return nil
+}
+
+// StopPodWatch tears down the active pod informer and clears pod data.
+// No-op if no pod watch is active. Safe to call from Update — factory
+// goroutines are drained in the background so this never blocks the UI loop.
+func (w *Watcher) StopPodWatch() {
+	w.podMu.Lock()
+	defer w.podMu.Unlock()
+
+	if w.podCancel == nil {
+		return
+	}
+	w.podCancel()
+	factory := w.podFactory // capture before nil-ing
+	go factory.Shutdown()   // drain informer goroutines off the UI path
+	w.store.ClearPods()
+	w.podCancel = nil
+	w.podFactory = nil
+}
+
+func (w *Watcher) upsertPod(obj interface{}) {
+	pod, ok := extractObj[corev1.Pod](obj)
+	if !ok {
+		return
+	}
+	w.store.UpsertPod(buildPodSnapshot(pod))
+}
+
+func buildPodSnapshot(pod *corev1.Pod) PodSnapshot {
+	snap := PodSnapshot{
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+		Phase:     pod.Status.Phase,
+		CreatedAt: pod.CreationTimestamp.Time,
+	}
+
+	for _, ref := range pod.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller {
+			snap.OwnerKind = ref.Kind
+			snap.OwnerName = ref.Name
+			break
+		}
+	}
+
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+			snap.Ready = true
+			break
+		}
+	}
+
+	if pod.Status.StartTime != nil {
+		t := pod.Status.StartTime.Time
+		snap.StartTime = &t
+	}
+
+	snap.Message = podProblemMessage(pod)
+	return snap
+}
+
+func podProblemMessage(pod *corev1.Pod) string {
+	switch pod.Status.Phase {
+	case corev1.PodFailed:
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+				t := cs.State.Terminated
+				if t.Reason != "" && t.Message != "" {
+					return t.Reason + ": " + t.Message
+				}
+				if t.Reason != "" {
+					return t.Reason
+				}
+			}
+		}
+		if pod.Status.Reason != "" {
+			if pod.Status.Message != "" {
+				return pod.Status.Reason + ": " + pod.Status.Message
+			}
+			return pod.Status.Reason
+		}
+		return pod.Status.Message
+
+	case corev1.PodUnknown:
+		if pod.Status.Reason != "" {
+			if pod.Status.Message != "" {
+				return pod.Status.Reason + ": " + pod.Status.Message
+			}
+			return pod.Status.Reason
+		}
+		return pod.Status.Message
+
+	case corev1.PodPending:
+		for _, cs := range pod.Status.InitContainerStatuses {
+			if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+				return cs.State.Waiting.Reason
+			}
+		}
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+				return cs.State.Waiting.Reason
+			}
+		}
+		for _, c := range pod.Status.Conditions {
+			if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Message != "" {
+				return c.Message
+			}
+		}
+		return pod.Status.Message
+
+	case corev1.PodRunning:
+		// CrashLoopBackOff manifests as Running phase with Ready=False.
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+				return cs.State.Waiting.Reason
+			}
+		}
+	}
+
+	return ""
 }
