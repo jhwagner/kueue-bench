@@ -53,6 +53,7 @@ func (m workloadDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.vp.SetWidth(m.width)
 		m.vp.SetHeight(m.height)
+		m.vp.SetContent(m.buildContent(m.lastSnap))
 		return m, nil
 
 	case snapshotMsg:
@@ -88,13 +89,13 @@ func (m workloadDetailModel) buildContent(snap watcher.Snapshot) string {
 	// Status timeline
 	sb.WriteString(renderDetailSectionHeader("Status Timeline", m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderWorkloadTimeline(wl))
+	sb.WriteString(renderWorkloadTimeline(wl, m.width))
 	sb.WriteString("\n\n")
 
 	// Resources
 	sb.WriteString(renderDetailSectionHeader("Resources", m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderWorkloadDetailResources(wl))
+	sb.WriteString(renderWorkloadDetailResources(wl, m.width))
 	sb.WriteString("\n\n")
 
 	// MultiKueue (management cluster only)
@@ -181,13 +182,15 @@ func condPrecedence(condType string) int {
 
 // renderWorkloadTimeline renders all conditions as a fixed-width table with
 // Created first, then conditions sorted by LastTransitionTime.
-func renderWorkloadTimeline(wl watcher.WorkloadSnapshot) string {
+func renderWorkloadTimeline(wl watcher.WorkloadSnapshot, width int) string {
 	// Column widths
 	const (
 		wCond  = 18
 		wStat  = 7
 		wTS    = 21
 		wDelta = 8
+		// fixed prefix per row: "  " + wCond + "  " + wStat + "  " + wTS + "  " + wDelta + "  " = 64
+		wPrefix = 64
 	)
 
 	type row struct {
@@ -222,16 +225,18 @@ func renderWorkloadTimeline(wl watcher.WorkloadSnapshot) string {
 		})
 	}
 
+	msgWidth := max(width-wPrefix, 10)
+
 	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
 
-	hdr := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %s",
+	hdr := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s",
 		wCond, "CONDITION",
 		wStat, "STATUS",
 		wTS, "TIMESTAMP",
 		wDelta, "DELTA",
-		"MESSAGE",
+		msgWidth, "MESSAGE",
 	)
-	sep := styleMuted.Render(strings.Repeat("─", len(hdr)))
+	sep := styleMuted.Render(strings.Repeat("─", width))
 
 	var sb strings.Builder
 	sb.WriteString(styleHdr.Render(hdr))
@@ -276,15 +281,16 @@ func renderWorkloadTimeline(wl watcher.WorkloadSnapshot) string {
 			} else if r.cond == kueuev1beta2.WorkloadFinished && r.status == "False" {
 				msgStyle = lipgloss.NewStyle().Foreground(colorRed)
 			}
-			msgRendered = msgStyle.Render(r.message)
+			msgRendered = msgStyle.Render(truncate(r.message, msgWidth))
 		}
 
 		condStr := truncate(r.cond, wCond)
-		row := fmt.Sprintf("  %-*s  %s  %-*s  %-*s  %s",
+		deltaRendered := styleMuted.Render(fmt.Sprintf("%-*s", wDelta, deltaStr))
+		row := fmt.Sprintf("  %-*s  %s  %-*s  %s  %s",
 			wCond, condStr,
 			statusRendered,
 			wTS, tsStr,
-			wDelta, styleMuted.Render(deltaStr),
+			deltaRendered,
 			msgRendered,
 		)
 		sb.WriteString(row)
@@ -297,10 +303,13 @@ func renderWorkloadTimeline(wl watcher.WorkloadSnapshot) string {
 // renderWorkloadDetailResources renders per-pod-set resource table.
 // Each row shows per-pod requests, pod count, and per-set total.
 // A workload-wide total line follows below the table.
-func renderWorkloadDetailResources(wl watcher.WorkloadSnapshot) string {
+func renderWorkloadDetailResources(wl watcher.WorkloadSnapshot, width int) string {
 	if len(wl.PodSets) == 0 {
 		return styleMuted.Render("  No pod sets.")
 	}
+
+	// fixed prefix per row: "  " + POD_SET(20) + "  " + PODS(6) + "  " + PER_POD(32) + "  " = 66
+	totalWidth := max(width-66, 10)
 
 	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
 	hdr := fmt.Sprintf("  %-20s  %6s  %-32s  %s", "POD SET", "PODS", "PER POD", "TOTAL")
@@ -311,7 +320,7 @@ func renderWorkloadDetailResources(wl watcher.WorkloadSnapshot) string {
 
 	for _, ps := range wl.PodSets {
 		perPod := renderPodSetResources(ps.Resources)
-		total := renderPodSetTotal(ps.Resources, ps.Count)
+		total := truncate(renderPodSetTotal(ps.Resources, ps.Count), totalWidth)
 		row := fmt.Sprintf("  %-20s  %6d  %-32s  %s",
 			truncate(ps.Name, 20),
 			ps.Count,

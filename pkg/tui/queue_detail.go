@@ -50,6 +50,7 @@ func (m queueDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.vp.SetWidth(m.width)
 		m.vp.SetHeight(m.height)
+		m.vp.SetContent(m.buildContent(m.lastSnap))
 		return m, nil
 
 	case snapshotMsg:
@@ -189,8 +190,9 @@ func renderQueueDetailResources(q watcher.QueueSnapshot) string {
 		return styleMuted.Render("  No resource flavors configured.")
 	}
 
-	colHdr := fmt.Sprintf("    %-20s  %6s  %7s  %8s  %10s  %8s",
-		"RESOURCE", "USED", "NOMINAL", "BORROWED", "BORROW-LMT", "LEND-LMT")
+	// bar(6) + " " + usedNominal(13) = 20 visual chars; header must match.
+	colHdr := fmt.Sprintf("    %-20s  %-20s  %8s  %10s  %8s",
+		"RESOURCE", "USED", "BORROWED", "BORROW-LMT", "LEND-LMT")
 	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
 
 	var sb strings.Builder
