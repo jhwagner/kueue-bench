@@ -140,8 +140,8 @@ func (m *workloadViewModel) rebuild() {
 		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
 	})
 
-	cols := buildWorkloadColumns(m.isManagement, m.width)
-	rows, keys := buildWorkloadRows(filtered, m.isManagement)
+	cols, includeDispatchedTo := buildWorkloadColumns(m.isManagement, m.width)
+	rows, keys := buildWorkloadRows(filtered, m.isManagement, includeDispatchedTo)
 
 	prevKey := m.selectedWorkloadKey()
 
@@ -195,7 +195,7 @@ func matchesFilter(status watcher.WorkloadStatus, f workloadFilter) bool {
 	return true
 }
 
-func buildWorkloadColumns(isManagement bool, termWidth int) []table.Column {
+func buildWorkloadColumns(isManagement bool, termWidth int) ([]table.Column, bool) {
 	cols := []table.Column{
 		{Title: "NAME", Width: wlColName},
 		{Title: "TYPE", Width: wlColType},
@@ -209,25 +209,26 @@ func buildWorkloadColumns(isManagement bool, termWidth int) []table.Column {
 		fixed := wlColName + wlColType + wlColQueue + wlColStatus + wlColAge + wlColResources + 6
 		if termWidth-fixed >= wlColDispatchedTo {
 			cols = append(cols, table.Column{Title: "DISPATCHED TO", Width: wlColDispatchedTo})
+			return cols, true
 		}
 	}
-	return cols
+	return cols, false
 }
 
-func buildWorkloadRows(workloads []watcher.WorkloadSnapshot, isManagement bool) ([]table.Row, []string) {
+func buildWorkloadRows(workloads []watcher.WorkloadSnapshot, isManagement, includeDispatchedTo bool) ([]table.Row, []string) {
 	rows := make([]table.Row, 0, len(workloads))
 	keys := make([]string, 0, len(workloads))
 
 	for _, wl := range workloads {
 		key := wl.Namespace + "/" + wl.Name
-		row := buildWorkloadRow(wl, isManagement)
+		row := buildWorkloadRow(wl, includeDispatchedTo)
 		rows = append(rows, row)
 		keys = append(keys, key)
 	}
 	return rows, keys
 }
 
-func buildWorkloadRow(wl watcher.WorkloadSnapshot, isManagement bool) table.Row {
+func buildWorkloadRow(wl watcher.WorkloadSnapshot, includeDispatchedTo bool) table.Row {
 	ownerKind := wl.OwnerKind
 	if ownerKind == "" {
 		ownerKind = "–"
@@ -242,7 +243,7 @@ func buildWorkloadRow(wl watcher.WorkloadSnapshot, isManagement bool) table.Row 
 		renderWorkloadResources(wl.Resources),
 	}
 
-	if isManagement {
+	if includeDispatchedTo {
 		dispatched := wl.DispatchedTo
 		if dispatched == "" {
 			dispatched = "–"

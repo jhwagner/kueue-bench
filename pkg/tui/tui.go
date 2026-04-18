@@ -39,18 +39,25 @@ const (
 
 // snapshotMsg carries a fresh snapshot from the watcher.
 type snapshotMsg struct {
+	gen  int
 	snap watcher.Snapshot
 }
 
 // syncDoneMsg signals that the initial cache sync completed (or failed).
 type syncDoneMsg struct {
+	gen int
 	err error
 }
 
 // podWatchReadyMsg signals that StartPodWatch completed (or failed).
 type podWatchReadyMsg struct {
+	gen int
 	err error
 }
+
+// watcherDeadMsg is sent by waitForUpdate when the watcher context is cancelled,
+// allowing the goroutine to exit cleanly. The model ignores it.
+type watcherDeadMsg struct{}
 
 // Model is the root BubbleTea model.
 type Model struct {
@@ -67,6 +74,7 @@ type Model struct {
 	watcher       *watcher.Watcher
 	watcherCtx    context.Context
 	cancelWatcher context.CancelFunc
+	watcherGen    int // incremented on each cluster switch to discard stale messages
 	snapshot      watcher.Snapshot
 	connState     connectionState
 
@@ -74,6 +82,10 @@ type Model struct {
 	navLevel    navLevel
 	overviewTab overviewTab
 	detailView  tea.Model // nil when navLevel == navOverview
+
+	// Cluster picker overlay
+	showClusterPicker bool
+	clusterPicker     clusterPickerModel
 
 	// Overview sub-views
 	queueView    queueViewModel
@@ -136,8 +148,8 @@ func New(topologyName, clusterName string, meta topology.Metadata) (*Model, erro
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		startWatcher(m.watcher, m.watcherCtx),
-		waitForUpdate(m.watcher.Store()),
+		startWatcher(m.watcher, m.watcherCtx, m.watcherGen),
+		waitForUpdate(m.watcher.Store(), m.watcherCtx.Done(), m.watcherGen),
 	)
 }
 
@@ -158,7 +170,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case watcherDeadMsg:
+		return m, nil
+
 	case syncDoneMsg:
+		if msg.gen != m.watcherGen {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.connState = stateDisconnected
 			m.statusErr = msg.err.Error()
@@ -168,12 +186,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case podWatchReadyMsg:
+		if msg.gen != m.watcherGen {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.statusErr = "pod watch: " + msg.err.Error()
 		}
 		return m, nil
 
 	case snapshotMsg:
+		if msg.gen != m.watcherGen {
+			return m, nil
+		}
 		m.snapshot = msg.snap
 		if m.width > 0 {
 			mh, eh := m.panelHeights()
@@ -186,7 +210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailView, cmd = m.detailView.Update(msg)
 			_ = cmd
 		}
-		return m, waitForUpdate(m.watcher.Store())
+		return m, waitForUpdate(m.watcher.Store(), m.watcherCtx.Done(), m.watcherGen)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -203,6 +227,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Cluster picker intercepts all keys while open.
+	if m.showClusterPicker {
+		switch {
+		case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.Esc):
+			m.showClusterPicker = false
+		case key.Matches(msg, m.keys.Up):
+			m.clusterPicker.moveUp()
+		case key.Matches(msg, m.keys.Down):
+			m.clusterPicker.moveDown()
+		case key.Matches(msg, m.keys.Enter):
+			chosen := m.clusterPicker.selected()
+			m.showClusterPicker = false
+			if chosen != "" && chosen != m.currentCluster {
+				return m.switchToCluster(chosen)
+			}
+		}
+		return m, nil
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		m.cancelWatcher()
@@ -214,6 +257,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.watcher.StopPodWatch()
 			m.navLevel = navOverview
 			m.detailView = nil
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Cluster):
+		if len(m.clusterOrder) > 1 {
+			m.clusterPicker = newClusterPicker(m.clusterOrder, m.currentCluster)
+			m.showClusterPicker = true
 		}
 		return m, nil
 
@@ -248,7 +298,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					var podCmd tea.Cmd
 					if wl, ok := m.snapshot.Workloads[wlKey]; ok {
 						if sel := watcher.PodLabelSelector(wl.OwnerKind, wl.OwnerName); sel != "" {
-							podCmd = startPodWatch(m.watcherCtx, m.watcher, wl.Namespace, sel)
+							podCmd = startPodWatch(m.watcherCtx, m.watcher, wl.Namespace, sel, m.watcherGen)
 						}
 					}
 					return m, podCmd
@@ -353,6 +403,11 @@ func (m Model) View() tea.View {
 		)
 	}
 
+	// Cluster picker overlays everything else.
+	if m.showClusterPicker {
+		content = renderClusterPicker(m.clusterPicker, m.clusters, m.width, m.height)
+	}
+
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
@@ -379,29 +434,85 @@ func (m Model) panelHeights() (mainH, eventH int) {
 	return mainH, eventH
 }
 
+// switchToCluster stops the current watcher and starts a new one for the named
+// cluster. The old waitForUpdate goroutine is drained via context cancellation;
+// stale messages are discarded by watcherGen.
+func (m Model) switchToCluster(name string) (tea.Model, tea.Cmd) {
+	cluster, ok := m.clusters[name]
+	if !ok {
+		return m, nil
+	}
+	isManagement := cluster.Role == "management"
+
+	// Tear down current watcher. cancelWatcher unblocks the old waitForUpdate
+	// goroutine via the done channel; Stop() shuts down informer goroutines.
+	m.watcher.StopPodWatch()
+	m.cancelWatcher()
+	m.watcher.Stop()
+
+	w, err := watcher.New(cluster.KubeconfigPath, isManagement)
+	if err != nil {
+		m.statusErr = "switch cluster: " + err.Error()
+		return m, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.watcher = w
+	m.watcherCtx = ctx
+	m.cancelWatcher = cancel
+	m.watcherGen++
+	m.currentCluster = name
+	m.clusterRole = cluster.Role
+	m.isManagement = isManagement
+	m.connState = stateConnecting
+	m.snapshot = watcher.Snapshot{}
+	m.navLevel = navOverview
+	m.detailView = nil
+	m.workloadView = newWorkloadView(isManagement)
+
+	if m.width > 0 {
+		mh, eh := m.panelHeights()
+		m.queueView.refresh(m.snapshot, m.width, mh)
+		m.workloadView.refresh(m.snapshot, m.width, mh)
+		m.eventView.refresh(m.snapshot, m.width, eh)
+	}
+
+	gen := m.watcherGen
+	return m, tea.Batch(
+		startWatcher(m.watcher, m.watcherCtx, gen),
+		waitForUpdate(m.watcher.Store(), m.watcherCtx.Done(), gen),
+	)
+}
+
 // --- Commands ----------------------------------------------------------------
 
 // startWatcher starts the watcher in a goroutine and signals syncDoneMsg when done.
-func startWatcher(w *watcher.Watcher, ctx context.Context) tea.Cmd {
+func startWatcher(w *watcher.Watcher, ctx context.Context, gen int) tea.Cmd {
 	return func() tea.Msg {
 		err := w.Start(ctx)
-		return syncDoneMsg{err: err}
+		return syncDoneMsg{gen: gen, err: err}
 	}
 }
 
-// waitForUpdate blocks until the store signals a mutation, then returns a snapshotMsg.
-func waitForUpdate(store *watcher.Store) tea.Cmd {
+// waitForUpdate blocks until the store signals a mutation or the watcher context
+// is cancelled. On cancellation it returns watcherDeadMsg so the goroutine exits
+// cleanly instead of leaking.
+func waitForUpdate(store *watcher.Store, done <-chan struct{}, gen int) tea.Cmd {
 	return func() tea.Msg {
-		<-store.UpdateCh()
-		return snapshotMsg{snap: store.Snapshot()}
+		select {
+		case <-store.UpdateCh():
+			return snapshotMsg{gen: gen, snap: store.Snapshot()}
+		case <-done:
+			return watcherDeadMsg{}
+		}
 	}
 }
 
 // startPodWatch starts a scoped pod informer and signals podWatchReadyMsg on completion.
-func startPodWatch(ctx context.Context, w *watcher.Watcher, namespace, labelSelector string) tea.Cmd {
+func startPodWatch(ctx context.Context, w *watcher.Watcher, namespace, labelSelector string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		err := w.StartPodWatch(ctx, namespace, labelSelector)
-		return podWatchReadyMsg{err: err}
+		return podWatchReadyMsg{gen: gen, err: err}
 	}
 }
 
