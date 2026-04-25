@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -109,7 +110,7 @@ func (m workloadDetailModel) buildContent(snap watcher.Snapshot) string {
 	// Pods
 	sb.WriteString(renderDetailSectionHeader("Pods", m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderWorkloadPods(wl, snap.Pods))
+	sb.WriteString(renderWorkloadPods(wl, snap.Pods, m.width))
 
 	return sb.String()
 }
@@ -180,29 +181,26 @@ func condPrecedence(condType string) int {
 	return 99
 }
 
-// renderWorkloadTimeline renders all conditions as a fixed-width table with
-// Created first, then conditions sorted by LastTransitionTime.
+// renderWorkloadTimeline renders all conditions as a table with Created first,
+// then conditions sorted by LastTransitionTime.
 func renderWorkloadTimeline(wl watcher.WorkloadSnapshot, width int) string {
-	// Column widths
-	const (
-		wCond  = 18
-		wStat  = 7
-		wTS    = 21
-		wDelta = 8
-		// fixed prefix per row: "  " + wCond + "  " + wStat + "  " + wTS + "  " + wDelta + "  " = 64
-		wPrefix = 64
-	)
-
-	type row struct {
-		cond      string
-		status    string // "True" / "False" / "Unknown" / "–"
-		ts        time.Time
-		message   string
-		isCreated bool
+	specs := []ColumnSpec{
+		{Title: "CONDITION", MinWidth: 10},
+		{Title: "STATUS", MinWidth: 5},
+		{Title: "TIMESTAMP", MinWidth: 19},
+		{Title: "DELTA", MinWidth: 5, Priority: 20},
+		{Title: "MESSAGE", MinWidth: 10, Flex: 1},
 	}
 
-	rows := []row{
-		{cond: "Created", status: "–", ts: wl.CreatedAt, isCreated: true},
+	type condRow struct {
+		cond    string
+		status  string
+		ts      time.Time
+		message string
+	}
+
+	entries := []condRow{
+		{cond: "Created", status: "–", ts: wl.CreatedAt},
 	}
 
 	sorted := make([]metav1.Condition, len(wl.Conditions))
@@ -215,9 +213,8 @@ func renderWorkloadTimeline(wl watcher.WorkloadSnapshot, width int) string {
 		}
 		return ti.Before(tj)
 	})
-
 	for _, c := range sorted {
-		rows = append(rows, row{
+		entries = append(entries, condRow{
 			cond:    c.Type,
 			status:  string(c.Status),
 			ts:      c.LastTransitionTime.Time,
@@ -225,79 +222,65 @@ func renderWorkloadTimeline(wl watcher.WorkloadSnapshot, width int) string {
 		})
 	}
 
-	msgWidth := max(width-wPrefix, 10)
+	rawRows := make([][]string, 0, len(entries))
+	dataRows := make([]table.Row, 0, len(entries))
 
-	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
-
-	hdr := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s",
-		wCond, "CONDITION",
-		wStat, "STATUS",
-		wTS, "TIMESTAMP",
-		wDelta, "DELTA",
-		msgWidth, "MESSAGE",
-	)
-	sep := styleMuted.Render(strings.Repeat("─", width))
-
-	var sb strings.Builder
-	sb.WriteString(styleHdr.Render(hdr))
-	sb.WriteString("\n")
-	sb.WriteString(sep)
-	sb.WriteString("\n")
-
-	for i, r := range rows {
-		// DELTA
+	for i, e := range entries {
 		var deltaStr string
 		if i == 0 {
 			deltaStr = "–"
 		} else {
-			d := r.ts.Sub(rows[i-1].ts)
+			d := e.ts.Sub(entries[i-1].ts)
 			if d < 0 {
 				d = 0
 			}
 			deltaStr = "+" + fmtDuration(d)
 		}
 
-		// STATUS style
-		var statusRendered string
-		switch r.status {
+		tsStr := e.ts.Format("2006-01-02 15:04:05")
+
+		rawRows = append(rawRows, []string{e.cond, e.status, tsStr, deltaStr, e.message})
+
+		var statusStyled string
+		switch e.status {
 		case "True":
-			statusRendered = lipgloss.NewStyle().Foreground(colorGreen).Render(fmt.Sprintf("%-*s", wStat, r.status))
+			statusStyled = lipgloss.NewStyle().Foreground(colorGreen).Render(e.status)
 		case "False":
-			statusRendered = lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("%-*s", wStat, r.status))
-		case "Unknown":
-			statusRendered = styleMuted.Render(fmt.Sprintf("%-*s", wStat, r.status))
-		default: // "–" for Created row
-			statusRendered = styleMuted.Render(fmt.Sprintf("%-*s", wStat, r.status))
+			statusStyled = lipgloss.NewStyle().Foreground(colorRed).Render(e.status)
+		default:
+			statusStyled = styleMuted.Render(e.status)
 		}
 
-		tsStr := r.ts.Format("2006-01-02 15:04:05")
-
-		// MESSAGE style
-		var msgRendered string
-		if r.message != "" {
+		var msgStyled string
+		if e.message != "" {
 			msgStyle := lipgloss.NewStyle().Foreground(colorSubtle)
-			if r.cond == kueuev1beta2.WorkloadEvicted {
+			if e.cond == kueuev1beta2.WorkloadEvicted {
 				msgStyle = lipgloss.NewStyle().Foreground(colorRed)
-			} else if r.cond == kueuev1beta2.WorkloadFinished && r.status == "False" {
+			} else if e.cond == kueuev1beta2.WorkloadFinished && e.status == "False" {
 				msgStyle = lipgloss.NewStyle().Foreground(colorRed)
 			}
-			msgRendered = msgStyle.Render(truncate(r.message, msgWidth))
+			msgStyled = msgStyle.Render(e.message)
 		}
 
-		condStr := truncate(r.cond, wCond)
-		deltaRendered := styleMuted.Render(fmt.Sprintf("%-*s", wDelta, deltaStr))
-		row := fmt.Sprintf("  %-*s  %s  %-*s  %s  %s",
-			wCond, condStr,
-			statusRendered,
-			wTS, tsStr,
-			deltaRendered,
-			msgRendered,
-		)
-		sb.WriteString(row)
-		sb.WriteString("\n")
+		dataRows = append(dataRows, table.Row{
+			e.cond,
+			statusStyled,
+			tsStr,
+			styleMuted.Render(deltaStr),
+			msgStyled,
+		})
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	widths := ComputeWidths(specs, rawRows, width)
+	cols := BuildColumns(specs, widths)
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(dataRows),
+		table.WithStyles(defaultTableStyles()),
+		table.WithWidth(width),
+		table.WithHeight(len(dataRows)+2), // +2: WithHeight counts header text + bottom border
+	)
+	return t.View()
 }
 
 // renderWorkloadDetailResources renders per-pod-set resource table.
@@ -308,35 +291,34 @@ func renderWorkloadDetailResources(wl watcher.WorkloadSnapshot, width int) strin
 		return styleMuted.Render("  No pod sets.")
 	}
 
-	// fixed prefix per row: "  " + POD_SET(20) + "  " + PODS(6) + "  " + PER_POD(32) + "  " = 66
-	totalWidth := max(width-66, 10)
-
-	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
-	hdr := fmt.Sprintf("  %-20s  %6s  %-32s  %s", "POD SET", "PODS", "PER POD", "TOTAL")
-
-	var sb strings.Builder
-	sb.WriteString(styleHdr.Render(hdr))
-	sb.WriteString("\n")
-
-	for _, ps := range wl.PodSets {
-		perPod := renderPodSetResources(ps.Resources)
-		total := truncate(renderPodSetTotal(ps.Resources, ps.Count), totalWidth)
-		row := fmt.Sprintf("  %-20s  %6d  %-32s  %s",
-			truncate(ps.Name, 20),
-			ps.Count,
-			perPod,
-			total,
-		)
-		sb.WriteString(row)
-		sb.WriteString("\n")
+	specs := []ColumnSpec{
+		{Title: "POD SET", MinWidth: 8, Flex: 1},
+		{Title: "PODS", MinWidth: 4},
+		{Title: "PER POD", MinWidth: 12, Flex: 2},
+		{Title: "TOTAL", MinWidth: 12, Flex: 2},
 	}
 
-	// Workload-wide total — always shown, outside the per-set table.
-	sb.WriteString("\n")
-	label := styleMuted.Render("  Workload total:")
-	sb.WriteString(label + "  " + renderPodSetResources(wl.Resources))
+	rawRows := make([][]string, 0, len(wl.PodSets))
+	dataRows := make([]table.Row, 0, len(wl.PodSets))
+	for _, ps := range wl.PodSets {
+		perPod := renderPodSetResources(ps.Resources)
+		total := renderPodSetTotal(ps.Resources, ps.Count)
+		rawRows = append(rawRows, []string{ps.Name, fmt.Sprintf("%d", ps.Count), perPod, total})
+		dataRows = append(dataRows, table.Row{ps.Name, fmt.Sprintf("%d", ps.Count), perPod, total})
+	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	widths := ComputeWidths(specs, rawRows, width)
+	cols := BuildColumns(specs, widths)
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(dataRows),
+		table.WithStyles(defaultTableStyles()),
+		table.WithWidth(width),
+		table.WithHeight(len(dataRows)+2), // +2: WithHeight counts header text + bottom border
+	)
+
+	return t.View() + "\n\n" +
+		styleMuted.Render("  Workload total:") + "  " + renderPodSetResources(wl.Resources)
 }
 
 // renderPodSetTotal multiplies per-pod resources by count and renders as a string.
@@ -382,7 +364,7 @@ func renderWorkloadMultiKueue(wl watcher.WorkloadSnapshot) string {
 	return row
 }
 
-func renderWorkloadPods(wl watcher.WorkloadSnapshot, pods map[string]watcher.PodSnapshot) string {
+func renderWorkloadPods(wl watcher.WorkloadSnapshot, pods map[string]watcher.PodSnapshot, width int) string {
 	// Unknown owner kind — no label selector available.
 	if watcher.PodLabelSelector(wl.OwnerKind, wl.OwnerName) == "" {
 		if wl.OwnerKind == "" {
@@ -393,6 +375,9 @@ func renderWorkloadPods(wl watcher.WorkloadSnapshot, pods map[string]watcher.Pod
 
 	// Empty state depends on workload admission status.
 	if len(pods) == 0 {
+		if wl.DispatchedTo != "" {
+			return styleMuted.Render(fmt.Sprintf("  pods running on worker cluster %q", wl.DispatchedTo))
+		}
 		switch wl.Status {
 		case watcher.WorkloadStatusAdmitted:
 			return styleMuted.Render("  waiting for pods...")
@@ -464,43 +449,46 @@ func renderWorkloadPods(wl watcher.WorkloadSnapshot, pods map[string]watcher.Pod
 		return problems[i].Name < problems[j].Name
 	})
 
-	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
-	hdr := fmt.Sprintf("  %-40s  %-10s  %-8s  %s", "NAME", "PHASE", "AGE", "MESSAGE")
-
-	var sb strings.Builder
-	sb.WriteString(summary)
-	sb.WriteString("\n\n")
-	sb.WriteString(styleMuted.Render("  PROBLEM PODS"))
-	sb.WriteString("\n")
-	sb.WriteString(styleHdr.Render(hdr))
-	sb.WriteString("\n")
-	sb.WriteString(styleMuted.Render(strings.Repeat("─", len(hdr))))
-	sb.WriteString("\n")
-
-	for _, p := range problems {
-		age := fmtAge(p.CreatedAt)
-		phaseStr := string(p.Phase)
-		var phaseRendered string
-		switch p.Phase {
-		case corev1.PodFailed, corev1.PodUnknown:
-			phaseRendered = lipgloss.NewStyle().Foreground(colorRed).Render(fmt.Sprintf("%-10s", phaseStr))
-		case corev1.PodPending:
-			phaseRendered = lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("%-10s", phaseStr))
-		default:
-			phaseRendered = fmt.Sprintf("%-10s", phaseStr)
-		}
-		msgRendered := styleMuted.Render(truncate(p.Message, 60))
-		row := fmt.Sprintf("  %-40s  %s  %-8s  %s",
-			truncate(p.Name, 40),
-			phaseRendered,
-			age,
-			msgRendered,
-		)
-		sb.WriteString(row)
-		sb.WriteString("\n")
+	specs := []ColumnSpec{
+		{Title: "NAME", MinWidth: 14, Flex: 2},
+		{Title: "PHASE", MinWidth: 7},
+		{Title: "AGE", MinWidth: 3, Priority: 20},
+		{Title: "MESSAGE", MinWidth: 10, Flex: 1},
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	rawRows := make([][]string, 0, len(problems))
+	dataRows := make([]table.Row, 0, len(problems))
+	for _, p := range problems {
+		phaseStr := string(p.Phase)
+		var phaseStyled string
+		switch p.Phase {
+		case corev1.PodFailed, corev1.PodUnknown:
+			phaseStyled = lipgloss.NewStyle().Foreground(colorRed).Render(phaseStr)
+		case corev1.PodPending:
+			phaseStyled = lipgloss.NewStyle().Foreground(colorYellow).Render(phaseStr)
+		default:
+			phaseStyled = phaseStr
+		}
+		rawRows = append(rawRows, []string{p.Name, phaseStr, fmtAge(p.CreatedAt), p.Message})
+		dataRows = append(dataRows, table.Row{
+			p.Name,
+			phaseStyled,
+			fmtAge(p.CreatedAt),
+			styleMuted.Render(p.Message),
+		})
+	}
+
+	widths := ComputeWidths(specs, rawRows, width)
+	cols := BuildColumns(specs, widths)
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(dataRows),
+		table.WithStyles(defaultTableStyles()),
+		table.WithWidth(width),
+		table.WithHeight(len(dataRows)+2), // +2: WithHeight counts header text + bottom border
+	)
+
+	return summary + "\n\n" + styleMuted.Render("  PROBLEM PODS") + "\n" + t.View()
 }
 
 func isProblemPod(p watcher.PodSnapshot, now time.Time) bool {

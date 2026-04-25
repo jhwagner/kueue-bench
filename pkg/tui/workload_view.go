@@ -53,16 +53,6 @@ func (f workloadFilter) String() string {
 	}
 }
 
-const (
-	wlColName         = 28
-	wlColType         = 8
-	wlColQueue        = 18
-	wlColStatus       = 14
-	wlColAge          = 6
-	wlColResources    = 18
-	wlColDispatchedTo = 14
-)
-
 // workloadViewModel renders the filterable workload overview table.
 //
 // The view stores its own copy of snapshot/width/height so that internal state
@@ -140,8 +130,14 @@ func (m *workloadViewModel) rebuild() {
 		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
 	})
 
-	cols, includeDispatchedTo := buildWorkloadColumns(m.isManagement, m.width)
-	rows, keys := buildWorkloadRows(filtered, m.isManagement, includeDispatchedTo)
+	specs := workloadColumnSpecs(m.isManagement)
+	rawRows, keys := buildWorkloadRows(filtered, m.isManagement)
+	widths := ComputeWidths(specs, rawRows, m.width)
+	cols := BuildColumns(specs, widths)
+	rows := make([]table.Row, len(rawRows))
+	for i, r := range rawRows {
+		rows[i] = table.Row(r)
+	}
 
 	prevKey := m.selectedWorkloadKey()
 
@@ -195,60 +191,58 @@ func matchesFilter(status watcher.WorkloadStatus, f workloadFilter) bool {
 	return true
 }
 
-func buildWorkloadColumns(isManagement bool, termWidth int) ([]table.Column, bool) {
-	cols := []table.Column{
-		{Title: "NAME", Width: wlColName},
-		{Title: "TYPE", Width: wlColType},
-		{Title: "QUEUE", Width: wlColQueue},
-		{Title: "STATUS", Width: wlColStatus},
-		{Title: "AGE", Width: wlColAge},
-		{Title: "RESOURCES", Width: wlColResources},
+// workloadColumnSpecs declares the layout of the workload overview table.
+// DISPATCHED TO is only present on management clusters and is droppable
+// (Priority=10) so narrow terminals can hide it while NAME/QUEUE/RESOURCES
+// flex to fill slack on wider ones.
+func workloadColumnSpecs(isManagement bool) []ColumnSpec {
+	specs := []ColumnSpec{
+		{Title: "NAME", MinWidth: 16, Flex: 3},
+		{Title: "TYPE", MinWidth: 6},
+		{Title: "QUEUE", MinWidth: 10, Flex: 1},
+		{Title: "STATUS", MinWidth: 14},
+		{Title: "AGE", MinWidth: 4},
+		{Title: "RESOURCES", MinWidth: 12, MaxWidth: 28, Flex: 1},
 	}
 	if isManagement {
-		// Only show DISPATCHED TO column if it fits.
-		fixed := wlColName + wlColType + wlColQueue + wlColStatus + wlColAge + wlColResources + 6
-		if termWidth-fixed >= wlColDispatchedTo {
-			cols = append(cols, table.Column{Title: "DISPATCHED TO", Width: wlColDispatchedTo})
-			return cols, true
-		}
+		specs = append(specs, ColumnSpec{Title: "CLUSTER", MinWidth: 7, Priority: 10})
 	}
-	return cols, false
+	return specs
 }
 
-func buildWorkloadRows(workloads []watcher.WorkloadSnapshot, isManagement, includeDispatchedTo bool) ([]table.Row, []string) {
-	rows := make([]table.Row, 0, len(workloads))
+func buildWorkloadRows(workloads []watcher.WorkloadSnapshot, isManagement bool) ([][]string, []string) {
+	rows := make([][]string, 0, len(workloads))
 	keys := make([]string, 0, len(workloads))
 
 	for _, wl := range workloads {
 		key := wl.Namespace + "/" + wl.Name
-		row := buildWorkloadRow(wl, includeDispatchedTo)
-		rows = append(rows, row)
+		rows = append(rows, buildWorkloadRow(wl, isManagement))
 		keys = append(keys, key)
 	}
 	return rows, keys
 }
 
-func buildWorkloadRow(wl watcher.WorkloadSnapshot, includeDispatchedTo bool) table.Row {
+func buildWorkloadRow(wl watcher.WorkloadSnapshot, isManagement bool) []string {
 	ownerKind := wl.OwnerKind
 	if ownerKind == "" {
 		ownerKind = "–"
 	}
 
-	row := table.Row{
-		truncate(wl.Name, wlColName),
-		truncate(ownerKind, wlColType),
-		truncate(wl.Queue, wlColQueue),
+	row := []string{
+		wl.Name,
+		ownerKind,
+		wl.Queue,
 		renderWorkloadStatus(wl.Status),
 		fmtAge(wl.CreatedAt),
 		renderWorkloadResources(wl.Resources),
 	}
 
-	if includeDispatchedTo {
+	if isManagement {
 		dispatched := wl.DispatchedTo
 		if dispatched == "" {
 			dispatched = "–"
 		}
-		row = append(row, truncate(dispatched, wlColDispatchedTo))
+		row = append(row, dispatched)
 	}
 
 	return row
@@ -269,7 +263,7 @@ func renderWorkloadStatus(s watcher.WorkloadStatus) string {
 	case watcher.WorkloadStatusEvicted:
 		style = lipgloss.NewStyle().Foreground(colorRed)
 	}
-	return style.Render(truncate(string(s), wlColStatus))
+	return style.Render(string(s))
 }
 
 // renderWorkloadResources renders all resources sorted by priority (GPU → CPU → Memory → other)
@@ -297,7 +291,7 @@ func renderWorkloadResources(resources map[corev1.ResourceName]resource.Quantity
 		val := quantityValue(rName, q)
 		parts = append(parts, fmt.Sprintf("%d %s", val, shortResourceName(rName)))
 	}
-	return truncate(strings.Join(parts, " "), wlColResources)
+	return strings.Join(parts, " ")
 }
 
 func resourceRank(rName corev1.ResourceName) int {

@@ -13,15 +13,7 @@ import (
 	"github.com/jhwagner/kueue-bench/pkg/watcher"
 )
 
-const (
-	barWidth     = 6  // number of block chars in utilization bar
-	colNameWidth = 20 // includes 2-char indicator prefix: "[glyph] name…"
-	colCohort    = 10
-	colPend      = 5
-	colAdm       = 5
-	colBorr      = 6
-	colResource  = 17 // "████░░ 1234/5678" → bar(6) + space(1) + "NNNN/MMMM" up to 9 + space(1)
-)
+const barWidth = 6 // number of block chars in utilization bar
 
 // queueViewModel renders the ClusterQueue overview table.
 type queueViewModel struct {
@@ -67,12 +59,14 @@ func (m queueViewModel) selectedQueueName() string {
 // when that measurement runs — otherwise the table renders one line too tall.
 func (m *queueViewModel) refresh(snap watcher.Snapshot, width, height int) {
 	m.resources = collectResources(snap)
-	// visibleResources is the subset that actually fits in the terminal.
-	// Both columns and rows must use the same trimmed list so row cell count
-	// matches column count (renderRow panics on mismatch).
-	visibleResources := visibleResourceCols(m.resources, width)
-	cols := buildQueueColumns(visibleResources)
-	rows, names := buildQueueRows(snap, visibleResources)
+	specs := queueColumnSpecs(m.resources)
+	rawRows, names := buildQueueRows(snap, m.resources)
+	widths := ComputeWidths(specs, rawRows, width)
+	cols := BuildColumns(specs, widths)
+	rows := make([]table.Row, len(rawRows))
+	for i, r := range rawRows {
+		rows[i] = table.Row(r)
+	}
 
 	prevName := m.selectedQueueName()
 
@@ -134,62 +128,68 @@ func sortResources(set map[corev1.ResourceName]struct{}) []corev1.ResourceName {
 	return append(append(append(gpu, cpu...), mem...), other...)
 }
 
-// visibleResourceCols returns the subset of resources that fit within termWidth.
-// Call this once per refresh and pass the result to both buildQueueColumns and
-// buildQueueRows so row cell count always equals column count.
-func visibleResourceCols(resources []corev1.ResourceName, termWidth int) []corev1.ResourceName {
-	fixed := colNameWidth + colCohort + colPend + colAdm + colBorr + 5 // 5 separators
-	available := termWidth - fixed
-	maxRes := available / colResource
-	if maxRes < 0 {
-		maxRes = 0
-	}
-	if maxRes > len(resources) {
-		maxRes = len(resources)
-	}
-	return resources[:maxRes]
-}
+// queueColumnSpecs declares the ClusterQueue overview table layout.
+//
+// Resource columns are dynamic: one per resource seen across all queues, with
+// Priority descending by position so the least-important resource is dropped
+// first on narrow terminals. The first resource (highest-priority, typically
+// GPU or CPU) is required. BORR is droppable early since it's supplemental.
+func queueColumnSpecs(resources []corev1.ResourceName) []ColumnSpec {
+	// Resource cell format: "████░░ 1234/5678" — bar(6) + space + numbers.
+	// MinWidth=12 leaves room for the bar + short numbers; MaxWidth=17
+	// covers the widest typical case.
+	const (
+		resMin = 12
+		resMax = 17
+	)
 
-// buildQueueColumns returns column definitions for the given (already-trimmed) resources.
-func buildQueueColumns(resources []corev1.ResourceName) []table.Column {
-	cols := []table.Column{
-		{Title: "NAME", Width: colNameWidth},
-		{Title: "COHORT", Width: colCohort},
-		{Title: "PEND", Width: colPend},
-		{Title: "ADM", Width: colAdm},
+	specs := []ColumnSpec{
+		{Title: "NAME", MinWidth: 14, Flex: 2}, // includes 2-char indicator prefix
+		{Title: "COHORT", MinWidth: 6, Flex: 1, Priority: 20},
+		{Title: "PEND", MinWidth: 4},
+		{Title: "ADM", MinWidth: 4},
 	}
-	for _, rName := range resources {
-		cols = append(cols, table.Column{Title: strings.ToUpper(shortResourceName(rName)), Width: colResource})
+	for i, rName := range resources {
+		spec := ColumnSpec{
+			Title:    strings.ToUpper(shortResourceName(rName)),
+			MinWidth: resMin,
+			MaxWidth: resMax,
+		}
+		if i > 0 {
+			// First resource required; subsequent ones droppable with
+			// priority descending by position (later = lower = dropped first).
+			spec.Priority = len(resources) - i
+		}
+		specs = append(specs, spec)
 	}
-	cols = append(cols, table.Column{Title: "BORR", Width: colBorr})
-	return cols
+	specs = append(specs, ColumnSpec{Title: "BORR", MinWidth: 4, Priority: 10})
+	return specs
 }
 
 // buildQueueRows builds one row per ClusterQueue, sorted by name.
-func buildQueueRows(snap watcher.Snapshot, resources []corev1.ResourceName) ([]table.Row, []string) {
-	// Sort queue names for stable display.
+func buildQueueRows(snap watcher.Snapshot, resources []corev1.ResourceName) ([][]string, []string) {
 	names := make([]string, 0, len(snap.Queues))
 	for name := range snap.Queues {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	rows := make([]table.Row, 0, len(names))
+	rows := make([][]string, 0, len(names))
 	for _, name := range names {
 		q := snap.Queues[name]
-		row := buildQueueRow(q, resources)
-		rows = append(rows, row)
+		rows = append(rows, buildQueueRow(q, resources))
 	}
 	return rows, names
 }
 
-func buildQueueRow(q watcher.QueueSnapshot, resources []corev1.ResourceName) table.Row {
-	// Name cell: 2-char indicator prefix + name truncated to remaining width.
-	// "  " when no alert, "[glyph] " when a flavor is near/at capacity.
+func buildQueueRow(q watcher.QueueSnapshot, resources []corev1.ResourceName) []string {
+	// Name cell: 2-char indicator prefix + name. "  " when no alert,
+	// "[glyph] " when a flavor is near/at capacity. The glyph carries ANSI
+	// styling but measures as 1 cell via lipgloss.Width.
 	indicator := flavorIndicatorGlyph(worstFlavorRatio(q))
-	row := table.Row{
-		indicator + " " + truncate(q.Name, colNameWidth-2),
-		truncate(q.Cohort, colCohort),
+	row := []string{
+		indicator + " " + q.Name,
+		q.Cohort,
 		fmt.Sprintf("%d", q.Pending),
 		fmt.Sprintf("%d", q.Admitted),
 	}
@@ -205,7 +205,6 @@ func buildQueueRow(q watcher.QueueSnapshot, resources []corev1.ResourceName) tab
 		row = append(row, renderResourceCell(used, nominal))
 	}
 
-	// Borrow: total borrowed across all flavors for the primary resource.
 	borrowed := primaryBorrowed(q, resources)
 	if borrowed > 0 {
 		row = append(row, fmt.Sprintf("%d", borrowed))

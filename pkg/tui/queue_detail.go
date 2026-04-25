@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -103,14 +104,14 @@ func (m queueDetailModel) buildContent(snap watcher.Snapshot) string {
 	// Resources
 	sb.WriteString(renderDetailSectionHeader("Resources", m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderQueueDetailResources(q))
+	sb.WriteString(renderQueueDetailResources(q, m.width))
 	sb.WriteString("\n")
 
 	// Workloads
 	activeWls := collectQueueWorkloads(snap.Workloads, q.Name)
 	sb.WriteString(renderDetailSectionHeader(fmt.Sprintf("Workloads (%d active)", len(activeWls)), m.width))
 	sb.WriteString("\n")
-	sb.WriteString(renderQueueDetailWorkloads(activeWls))
+	sb.WriteString(renderQueueDetailWorkloads(activeWls, m.width))
 	sb.WriteString("\n")
 
 	// Events
@@ -183,60 +184,81 @@ func fmtFairSharingWeight(w *resource.Quantity) string {
 	return w.String()
 }
 
-// renderQueueDetailResources renders one flavor block per flavor, each with
-// resource rows indented beneath a flavor header.
-func renderQueueDetailResources(q watcher.QueueSnapshot) string {
+// renderQueueDetailResources renders one flavor block per flavor. Each flavor
+// gets a name header followed by a bubbles/table showing its resource rows.
+// Column widths are computed across all flavors so columns align consistently.
+func renderQueueDetailResources(q watcher.QueueSnapshot, width int) string {
 	if len(q.Flavors) == 0 {
 		return styleMuted.Render("  No resource flavors configured.")
 	}
 
-	// bar(6) + " " + usedNominal(13) = 20 visual chars; header must match.
-	colHdr := fmt.Sprintf("    %-20s  %-20s  %8s  %10s  %8s",
-		"RESOURCE", "USED", "BORROWED", "BORROW-LMT", "LEND-LMT")
-	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
+	specs := []ColumnSpec{
+		{Title: "RESOURCE", MinWidth: 12, Flex: 1},
+		// bar(6) + " " + numbers padded to 13 = 20 visual chars; pinned.
+		{Title: "USED", MinWidth: 20, MaxWidth: 20},
+		{Title: "BORROWED", MinWidth: 5, Priority: 20},
+		{Title: "BORROW-LMT", MinWidth: 10, Priority: 10},
+		{Title: "LEND-LMT", MinWidth: 8, Priority: 10},
+	}
 
-	var sb strings.Builder
+	type flavorData struct {
+		name string
+		rows []table.Row
+	}
 
-	for i, fl := range q.Flavors {
-		if i > 0 {
-			sb.WriteString("\n")
-		}
+	// Collect raw (unstyled) rows across all flavors to measure natural widths.
+	var allRaw [][]string
+	flavors := make([]flavorData, 0, len(q.Flavors))
 
-		// Flavor header
-		flavorHeader := lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render("  " + fl.Name)
-		sb.WriteString(flavorHeader)
-		sb.WriteString("\n")
-		sb.WriteString(styleHdr.Render(colHdr))
-		sb.WriteString("\n")
-
+	for _, fl := range q.Flavors {
 		resources := sortedFlavorResources(fl)
+		rows := make([]table.Row, 0, len(resources))
+
 		for _, rName := range resources {
 			rs := fl.Resources[rName]
 			used := quantityValue(rName, rs.Used)
 			nominal := quantityValue(rName, rs.Nominal)
-			borrowLmt := fmtQtyPtr(rName, rs.BorrowingLimit)
-			lendLmt := fmtQtyPtr(rName, rs.LendingLimit)
+
+			allRaw = append(allRaw, []string{
+				string(rName),
+				renderBar(used, nominal, barWidth) + " " + fmt.Sprintf("%-13s", fmt.Sprintf("%d/%d", used, nominal)),
+				fmtQty(rName, rs.Borrowed),
+				fmtQtyPtr(rName, rs.BorrowingLimit),
+				fmtQtyPtr(rName, rs.LendingLimit),
+			})
 
 			utilStyle := utilizationStyle(used, nominal)
-			bar := renderBar(used, nominal, barWidth)
-			coloredBar := utilStyle.Render(bar)
-			usedNominal := utilStyle.Render(
-				fmt.Sprintf("%-13s", fmt.Sprintf("%d/%d", used, nominal)),
-			)
-
-			row := fmt.Sprintf("    %-20s  %s %s  %8s  %10s  %8s",
-				truncate(string(rName), 20),
-				coloredBar,
-				usedNominal,
+			rows = append(rows, table.Row{
+				string(rName),
+				utilStyle.Render(renderBar(used, nominal, barWidth)) + " " +
+					utilStyle.Render(fmt.Sprintf("%-13s", fmt.Sprintf("%d/%d", used, nominal))),
 				fmtQty(rName, rs.Borrowed),
-				borrowLmt,
-				lendLmt,
-			)
-			sb.WriteString(row)
-			sb.WriteString("\n")
+				fmtQtyPtr(rName, rs.BorrowingLimit),
+				fmtQtyPtr(rName, rs.LendingLimit),
+			})
 		}
+		flavors = append(flavors, flavorData{fl.Name, rows})
 	}
 
+	widths := ComputeWidths(specs, allRaw, width)
+	cols := BuildColumns(specs, widths)
+
+	var sb strings.Builder
+	for i, fd := range flavors {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render("  " + fd.name))
+		sb.WriteString("\n")
+		t := table.New(
+			table.WithColumns(cols),
+			table.WithRows(fd.rows),
+			table.WithStyles(defaultTableStyles()),
+			table.WithWidth(width),
+			table.WithHeight(len(fd.rows)+2), // +2: WithHeight counts header text + bottom border
+		)
+		sb.WriteString(t.View())
+	}
 	return strings.TrimRight(sb.String(), "\n")
 }
 
@@ -250,33 +272,45 @@ func sortedFlavorResources(fl watcher.FlavorSnapshot) []corev1.ResourceName {
 	return names
 }
 
-func renderQueueDetailWorkloads(wls []watcher.WorkloadSnapshot) string {
+func renderQueueDetailWorkloads(wls []watcher.WorkloadSnapshot, width int) string {
 	if len(wls) == 0 {
 		return styleMuted.Render("  No active workloads.")
 	}
 
-	hdr := fmt.Sprintf("  %-30s  %-14s  %6s  %s",
-		"NAME", "STATUS", "AGE", "RESOURCES")
-	styleHdr := lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
-
-	var sb strings.Builder
-	sb.WriteString(styleHdr.Render(hdr))
-	sb.WriteString("\n")
-
-	for _, wl := range wls {
-		statusStr := renderWorkloadStatus(wl.Status)
-		resources := renderWorkloadResources(wl.Resources)
-		row := fmt.Sprintf("  %-30s  %-14s  %6s  %s",
-			truncate(wl.Name, 30),
-			statusStr,
-			fmtAge(wl.CreatedAt),
-			resources,
-		)
-		sb.WriteString(row)
-		sb.WriteString("\n")
+	specs := []ColumnSpec{
+		{Title: "NAME", MinWidth: 14, Flex: 2},
+		{Title: "STATUS", MinWidth: 9},
+		{Title: "AGE", MinWidth: 3, Priority: 20},
+		{Title: "RESOURCES", MinWidth: 10, Flex: 1},
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	rawRows := make([][]string, 0, len(wls))
+	dataRows := make([]table.Row, 0, len(wls))
+	for _, wl := range wls {
+		rawRows = append(rawRows, []string{
+			wl.Name,
+			string(wl.Status),
+			fmtAge(wl.CreatedAt),
+			renderWorkloadResources(wl.Resources),
+		})
+		dataRows = append(dataRows, table.Row{
+			wl.Name,
+			renderWorkloadStatus(wl.Status),
+			fmtAge(wl.CreatedAt),
+			renderWorkloadResources(wl.Resources),
+		})
+	}
+
+	widths := ComputeWidths(specs, rawRows, width)
+	cols := BuildColumns(specs, widths)
+	t := table.New(
+		table.WithColumns(cols),
+		table.WithRows(dataRows),
+		table.WithStyles(defaultTableStyles()),
+		table.WithWidth(width),
+		table.WithHeight(len(dataRows)+2), // +2: WithHeight counts header text + bottom border
+	)
+	return t.View()
 }
 
 func renderQueueDetailEvents(events []watcher.EventEntry, width int) string {
@@ -360,10 +394,10 @@ func renderDetailSectionHeader(title string, width int) string {
 	// visible width separately from the raw string used for padding.
 	visibleTitle := " " + title + " "
 	visibleWidth := lipgloss.Width(visibleTitle)
-	lineWidth := width - visibleWidth - 4 // 4 for leading "  ──"
+	lineWidth := width - visibleWidth - 2 // 2 for leading "──"
 	if lineWidth < 0 {
 		lineWidth = 0
 	}
-	line := "  ──" + visibleTitle + strings.Repeat("─", lineWidth)
+	line := "──" + visibleTitle + strings.Repeat("─", lineWidth)
 	return "\n" + styleSectionHeader.Render(line)
 }
