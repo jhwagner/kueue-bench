@@ -87,6 +87,10 @@ type Model struct {
 	showClusterPicker bool
 	clusterPicker     clusterPickerModel
 
+	// Submit dialog overlay
+	showSubmit  bool
+	submitView  submitViewModel
+
 	// Overview sub-views
 	queueView    queueViewModel
 	workloadView workloadViewModel
@@ -205,12 +209,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.workloadView.refresh(m.snapshot, m.width, mh)
 			m.eventView.refresh(m.snapshot, m.width, eh)
 		}
+		if m.showSubmit {
+			m.submitView.refreshOptions(m.snapshot)
+		}
 		if m.navLevel == navDetail && m.detailView != nil {
 			var cmd tea.Cmd
 			m.detailView, cmd = m.detailView.Update(msg)
 			_ = cmd
 		}
 		return m, waitForUpdate(m.watcher.Store(), m.watcherCtx.Done(), m.watcherGen)
+
+	case submitResultMsg:
+		if msg.err != nil {
+			m.submitView.submitErr = msg.err.Error()
+		} else {
+			m.showSubmit = false
+		}
+		return m, nil
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -227,6 +242,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Submit dialog intercepts all keys while open.
+	if m.showSubmit {
+		if key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Esc) {
+			m.showSubmit = false
+			return m, nil
+		}
+		cmd := m.submitView.update(msg, m.keys)
+		return m, cmd
+	}
+
 	// Cluster picker intercepts all keys while open.
 	if m.showClusterPicker {
 		switch {
@@ -266,6 +291,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.showClusterPicker = true
 		}
 		return m, nil
+
+	case key.Matches(msg, m.keys.Submit):
+		cluster := m.clusters[m.currentCluster]
+		var cmd tea.Cmd
+		m.submitView, cmd = newSubmitView(m.snapshot, cluster.KubeconfigPath)
+		m.showSubmit = true
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Tab1):
 		if m.navLevel == navOverview {
@@ -403,7 +435,10 @@ func (m Model) View() tea.View {
 		)
 	}
 
-	// Cluster picker overlays everything else.
+	// Overlays (cluster picker takes priority if both somehow open).
+	if m.showSubmit {
+		content = m.submitView.view(m.width, m.height)
+	}
 	if m.showClusterPicker {
 		content = renderClusterPicker(m.clusterPicker, m.clusters, m.width, m.height)
 	}

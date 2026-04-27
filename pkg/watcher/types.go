@@ -202,9 +202,27 @@ func (p PodSnapshot) deepCopy() PodSnapshot {
 	return dst
 }
 
+// LocalQueueSnapshot is a point-in-time view of a LocalQueue.
+type LocalQueueSnapshot struct {
+	Name         string
+	Namespace    string
+	ClusterQueue string
+	Active       bool
+	Pending      int32
+	Admitted     int32
+}
+
+// WorkloadPriorityClassSnapshot is a point-in-time view of a WorkloadPriorityClass.
+type WorkloadPriorityClassSnapshot struct {
+	Name  string
+	Value int32
+}
+
 // Snapshot is the aggregated cluster state at a point in time.
 type Snapshot struct {
 	Queues             map[string]QueueSnapshot             // key: ClusterQueue name
+	LocalQueues        map[string]LocalQueueSnapshot        // key: "namespace/name"
+	PriorityClasses    map[string]WorkloadPriorityClassSnapshot // key: name
 	Workloads          map[string]WorkloadSnapshot          // key: "namespace/name"
 	MultiKueueClusters map[string]MultiKueueClusterSnapshot // key: cluster name
 	Events             []EventEntry                         // ordered oldest → newest, capped at 500

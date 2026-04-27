@@ -3,17 +3,21 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Tab1    key.Binding
-	Tab2    key.Binding
-	Up      key.Binding
-	Down    key.Binding
-	Enter   key.Binding
-	Esc     key.Binding
-	Submit  key.Binding
-	Cluster key.Binding
-	Filter  key.Binding
-	Help    key.Binding
-	Quit    key.Binding
+	Tab1     key.Binding
+	Tab2     key.Binding
+	Tab      key.Binding
+	ShiftTab key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Left     key.Binding
+	Right    key.Binding
+	Enter    key.Binding
+	Esc      key.Binding
+	Submit   key.Binding
+	Cluster  key.Binding
+	Filter   key.Binding
+	Help     key.Binding
+	Quit     key.Binding
 }
 
 var defaultKeyMap = keyMap{
@@ -25,6 +29,14 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("2"),
 		key.WithHelp("2", "workloads"),
 	),
+	Tab: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "next field"),
+	),
+	ShiftTab: key.NewBinding(
+		key.WithKeys("shift+tab"),
+		key.WithHelp("shift+tab", "prev field"),
+	),
 	Up: key.NewBinding(
 		key.WithKeys("k", "up"),
 		key.WithHelp("k/↑", "up"),
@@ -32,6 +44,14 @@ var defaultKeyMap = keyMap{
 	Down: key.NewBinding(
 		key.WithKeys("j", "down"),
 		key.WithHelp("j/↓", "down"),
+	),
+	Left: key.NewBinding(
+		key.WithKeys("h", "left"),
+		key.WithHelp("h/←", "left"),
+	),
+	Right: key.NewBinding(
+		key.WithKeys("l", "right"),
+		key.WithHelp("l/→", "right"),
 	),
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),

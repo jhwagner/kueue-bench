@@ -107,27 +107,5 @@ func renderClusterPicker(p clusterPickerModel, clusters map[string]topology.Clus
 	sb.WriteString(stylePickerCurrent.Render("[j/k] navigate  [enter] select  [esc] cancel"))
 
 	boxed := stylePickerBorder.Width(innerWidth).Render(sb.String())
-
-	// Center the box in the terminal.
-	boxW := lipgloss.Width(boxed)
-	boxH := strings.Count(boxed, "\n") + 1
-
-	padLeft := (termWidth - boxW) / 2
-	if padLeft < 0 {
-		padLeft = 0
-	}
-	padTop := (termHeight - boxH) / 2
-	if padTop < 0 {
-		padTop = 0
-	}
-
-	leftPad := strings.Repeat(" ", padLeft)
-	topPad := strings.Repeat("\n", padTop)
-
-	lines := strings.Split(boxed, "\n")
-	for i, line := range lines {
-		lines[i] = leftPad + line
-	}
-
-	return topPad + strings.Join(lines, "\n")
+	return centerBox(boxed, termWidth, termHeight)
 }

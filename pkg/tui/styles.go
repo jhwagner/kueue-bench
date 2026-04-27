@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
 )
@@ -80,3 +82,19 @@ func defaultTableStyles() table.Styles {
 // renderBar renders an inline utilization bar of the form "████░░ 32/40".
 // Used in Commits 6-8 (queue/workload tables).
 // func renderBar(used, nominal int64, width int) string { ... }
+
+// centerBox centers a pre-rendered box string in the terminal window.
+func centerBox(boxed string, termWidth, termHeight int) string {
+	boxW := lipgloss.Width(boxed)
+	boxH := strings.Count(boxed, "\n") + 1
+
+	padLeft := max(0, (termWidth-boxW)/2)
+	padTop := max(0, (termHeight-boxH)/2)
+
+	leftPad := strings.Repeat(" ", padLeft)
+	lines := strings.Split(boxed, "\n")
+	for i, line := range lines {
+		lines[i] = leftPad + line
+	}
+	return strings.Repeat("\n", padTop) + strings.Join(lines, "\n")
+}

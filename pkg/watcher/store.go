@@ -9,7 +9,9 @@ const eventBufCap = 500
 type Store struct {
 	mu                 sync.RWMutex
 	queues             map[string]QueueSnapshot
-	workloads          map[string]WorkloadSnapshot // key: "namespace/name"
+	localQueues        map[string]LocalQueueSnapshot        // key: "namespace/name"
+	priorityClasses    map[string]WorkloadPriorityClassSnapshot // key: name
+	workloads          map[string]WorkloadSnapshot          // key: "namespace/name"
 	multiKueueClusters map[string]MultiKueueClusterSnapshot
 	pods               map[string]PodSnapshot // key: "namespace/name"; scoped to active detail view
 
@@ -27,6 +29,8 @@ type Store struct {
 func NewStore() *Store {
 	return &Store{
 		queues:             make(map[string]QueueSnapshot),
+		localQueues:        make(map[string]LocalQueueSnapshot),
+		priorityClasses:    make(map[string]WorkloadPriorityClassSnapshot),
 		workloads:          make(map[string]WorkloadSnapshot),
 		multiKueueClusters: make(map[string]MultiKueueClusterSnapshot),
 		pods:               make(map[string]PodSnapshot),
@@ -47,6 +51,8 @@ func (s *Store) Snapshot() Snapshot {
 
 	snap := Snapshot{
 		Queues:             make(map[string]QueueSnapshot, len(s.queues)),
+		LocalQueues:        make(map[string]LocalQueueSnapshot, len(s.localQueues)),
+		PriorityClasses:    make(map[string]WorkloadPriorityClassSnapshot, len(s.priorityClasses)),
 		Workloads:          make(map[string]WorkloadSnapshot, len(s.workloads)),
 		MultiKueueClusters: make(map[string]MultiKueueClusterSnapshot, len(s.multiKueueClusters)),
 		Events:             make([]EventEntry, s.eventSize),
@@ -55,6 +61,12 @@ func (s *Store) Snapshot() Snapshot {
 
 	for k, v := range s.queues {
 		snap.Queues[k] = v.deepCopy()
+	}
+	for k, v := range s.localQueues {
+		snap.LocalQueues[k] = v
+	}
+	for k, v := range s.priorityClasses {
+		snap.PriorityClasses[k] = v
 	}
 	for k, v := range s.workloads {
 		snap.Workloads[k] = v.deepCopy()
@@ -87,6 +99,40 @@ func (s *Store) UpsertQueue(q QueueSnapshot) {
 func (s *Store) DeleteQueue(name string) {
 	s.mu.Lock()
 	delete(s.queues, name)
+	s.mu.Unlock()
+	s.signal()
+}
+
+// UpsertLocalQueue inserts or replaces a LocalQueue snapshot.
+func (s *Store) UpsertLocalQueue(lq LocalQueueSnapshot) {
+	key := lq.Namespace + "/" + lq.Name
+	s.mu.Lock()
+	s.localQueues[key] = lq
+	s.mu.Unlock()
+	s.signal()
+}
+
+// DeleteLocalQueue removes a LocalQueue snapshot by namespace and name.
+func (s *Store) DeleteLocalQueue(namespace, name string) {
+	key := namespace + "/" + name
+	s.mu.Lock()
+	delete(s.localQueues, key)
+	s.mu.Unlock()
+	s.signal()
+}
+
+// UpsertPriorityClass inserts or replaces a WorkloadPriorityClass snapshot.
+func (s *Store) UpsertPriorityClass(pc WorkloadPriorityClassSnapshot) {
+	s.mu.Lock()
+	s.priorityClasses[pc.Name] = pc
+	s.mu.Unlock()
+	s.signal()
+}
+
+// DeletePriorityClass removes a WorkloadPriorityClass snapshot by name.
+func (s *Store) DeletePriorityClass(name string) {
+	s.mu.Lock()
+	delete(s.priorityClasses, name)
 	s.mu.Unlock()
 	s.signal()
 }

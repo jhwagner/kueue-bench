@@ -72,11 +72,17 @@ func (w *Watcher) Start(ctx context.Context) error {
 	if err := w.registerClusterQueueHandlers(); err != nil {
 		return fmt.Errorf("register ClusterQueue handlers: %w", err)
 	}
+	if err := w.registerLocalQueueHandlers(); err != nil {
+		return fmt.Errorf("register LocalQueue handlers: %w", err)
+	}
 	if err := w.registerWorkloadHandlers(); err != nil {
 		return fmt.Errorf("register Workload handlers: %w", err)
 	}
 	if err := w.registerEventHandlers(); err != nil {
 		return fmt.Errorf("register Event handlers: %w", err)
+	}
+	if err := w.registerWorkloadPriorityClassHandlers(); err != nil {
+		return fmt.Errorf("register WorkloadPriorityClass handlers: %w", err)
 	}
 	if w.isManagement {
 		if err := w.registerMultiKueueClusterHandlers(); err != nil {
@@ -285,6 +291,74 @@ func buildQueueSnapshot(cq *kueuev1beta2.ClusterQueue) QueueSnapshot {
 	}
 
 	return snap
+}
+
+// --- LocalQueue informer -----------------------------------------------------
+
+func (w *Watcher) registerLocalQueueHandlers() error {
+	informer := w.kueueFactory.Kueue().V1beta2().LocalQueues().Informer()
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { w.upsertLocalQueue(obj) },
+		UpdateFunc: func(_, newObj interface{}) { w.upsertLocalQueue(newObj) },
+		DeleteFunc: func(obj interface{}) {
+			if lq, ok := extractObj[kueuev1beta2.LocalQueue](obj); ok {
+				w.store.DeleteLocalQueue(lq.Namespace, lq.Name)
+			}
+		},
+	})
+	return err
+}
+
+func (w *Watcher) upsertLocalQueue(obj interface{}) {
+	lq, ok := obj.(*kueuev1beta2.LocalQueue)
+	if !ok {
+		return
+	}
+	w.store.UpsertLocalQueue(buildLocalQueueSnapshot(lq))
+}
+
+func buildLocalQueueSnapshot(lq *kueuev1beta2.LocalQueue) LocalQueueSnapshot {
+	snap := LocalQueueSnapshot{
+		Name:         lq.Name,
+		Namespace:    lq.Namespace,
+		ClusterQueue: string(lq.Spec.ClusterQueue),
+		Pending:      lq.Status.PendingWorkloads,
+		Admitted:     lq.Status.AdmittedWorkloads,
+	}
+	for _, c := range lq.Status.Conditions {
+		if c.Type == kueuev1beta2.LocalQueueActive && c.Status == metav1.ConditionTrue {
+			snap.Active = true
+			break
+		}
+	}
+	return snap
+}
+
+// --- WorkloadPriorityClass informer ------------------------------------------
+
+func (w *Watcher) registerWorkloadPriorityClassHandlers() error {
+	informer := w.kueueFactory.Kueue().V1beta2().WorkloadPriorityClasses().Informer()
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj interface{}) { w.upsertPriorityClass(obj) },
+		UpdateFunc: func(_, newObj interface{}) { w.upsertPriorityClass(newObj) },
+		DeleteFunc: func(obj interface{}) {
+			if wpc, ok := extractObj[kueuev1beta2.WorkloadPriorityClass](obj); ok {
+				w.store.DeletePriorityClass(wpc.Name)
+			}
+		},
+	})
+	return err
+}
+
+func (w *Watcher) upsertPriorityClass(obj interface{}) {
+	wpc, ok := obj.(*kueuev1beta2.WorkloadPriorityClass)
+	if !ok {
+		return
+	}
+	w.store.UpsertPriorityClass(WorkloadPriorityClassSnapshot{
+		Name:  wpc.Name,
+		Value: wpc.Value,
+	})
 }
 
 // --- Workload informer -------------------------------------------------------
