@@ -76,6 +76,21 @@ EOF
 kubectl get workloads -A
 ```
 
+### Watch with the TUI (experimental)
+
+Launch an interactive terminal UI connected to a running topology:
+
+```bash
+kueue-bench tui --topology single-cluster
+```
+
+Shows live ClusterQueue utilization, workload admission status, and Kueue events. Key bindings:
+- `1`/`2` — switch between Queues and Workloads tabs
+- `Enter` — drill into a queue or workload for detail
+- `s` — submit an ad-hoc job
+- `c` — switch clusters (multi-cluster topologies)
+- `Esc` / `q` — go back / quit
+
 ### Delete a Topology
 
 Clean up when you're done:
@@ -162,7 +177,5 @@ kueue-bench/
 
 ## Planned Features
 
-- Multi-cluster topologies
-- Workload generation for load simulation
 - Metrics and dashboards for visualizing results
 - Benchmark runner and automated reports for quantitative analysis of Kueue configurations
