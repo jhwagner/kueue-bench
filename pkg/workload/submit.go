@@ -114,7 +114,7 @@ func submitName() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 6)
 	for i := range b {
-		b[i] = chars[rand.IntN(len(chars))]
+		b[i] = chars[rand.IntN(len(chars))] //nolint:gosec // job name suffix, not security-sensitive
 	}
 	return fmt.Sprintf("tui-%s", string(b))
 }

@@ -9,9 +9,9 @@ const eventBufCap = 500
 type Store struct {
 	mu                 sync.RWMutex
 	queues             map[string]QueueSnapshot
-	localQueues        map[string]LocalQueueSnapshot        // key: "namespace/name"
+	localQueues        map[string]LocalQueueSnapshot            // key: "namespace/name"
 	priorityClasses    map[string]WorkloadPriorityClassSnapshot // key: name
-	workloads          map[string]WorkloadSnapshot          // key: "namespace/name"
+	workloads          map[string]WorkloadSnapshot              // key: "namespace/name"
 	multiKueueClusters map[string]MultiKueueClusterSnapshot
 	pods               map[string]PodSnapshot // key: "namespace/name"; scoped to active detail view
 

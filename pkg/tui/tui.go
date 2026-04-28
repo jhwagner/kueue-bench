@@ -88,8 +88,8 @@ type Model struct {
 	clusterPicker     clusterPickerModel
 
 	// Submit dialog overlay
-	showSubmit  bool
-	submitView  submitViewModel
+	showSubmit bool
+	submitView submitViewModel
 
 	// Overview sub-views
 	queueView    queueViewModel

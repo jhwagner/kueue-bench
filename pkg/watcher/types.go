@@ -220,11 +220,11 @@ type WorkloadPriorityClassSnapshot struct {
 
 // Snapshot is the aggregated cluster state at a point in time.
 type Snapshot struct {
-	Queues             map[string]QueueSnapshot             // key: ClusterQueue name
-	LocalQueues        map[string]LocalQueueSnapshot        // key: "namespace/name"
+	Queues             map[string]QueueSnapshot                 // key: ClusterQueue name
+	LocalQueues        map[string]LocalQueueSnapshot            // key: "namespace/name"
 	PriorityClasses    map[string]WorkloadPriorityClassSnapshot // key: name
-	Workloads          map[string]WorkloadSnapshot          // key: "namespace/name"
-	MultiKueueClusters map[string]MultiKueueClusterSnapshot // key: cluster name
-	Events             []EventEntry                         // ordered oldest → newest, capped at 500
-	Pods               map[string]PodSnapshot               // key: "namespace/name"; scoped to active detail view
+	Workloads          map[string]WorkloadSnapshot              // key: "namespace/name"
+	MultiKueueClusters map[string]MultiKueueClusterSnapshot     // key: cluster name
+	Events             []EventEntry                             // ordered oldest → newest, capped at 500
+	Pods               map[string]PodSnapshot                   // key: "namespace/name"; scoped to active detail view
 }

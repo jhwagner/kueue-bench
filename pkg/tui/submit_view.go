@@ -43,10 +43,10 @@ const (
 // --- Size presets ------------------------------------------------------------
 
 type sizePreset struct {
-	label  string
-	cpu    resource.Quantity
-	mem    resource.Quantity
-	gpu    resource.Quantity
+	label string
+	cpu   resource.Quantity
+	mem   resource.Quantity
+	gpu   resource.Quantity
 }
 
 var sizePresets = []sizePreset{
@@ -69,7 +69,7 @@ type submitViewModel struct {
 	priorityIdx int // 0=none, 1..N = priorityClasses[i-1]
 
 	// Dynamic option lists updated from snapshot on each refresh
-	queues          []watcher.LocalQueueSnapshot // sorted by namespace/name
+	queues          []watcher.LocalQueueSnapshot            // sorted by namespace/name
 	priorityClasses []watcher.WorkloadPriorityClassSnapshot // sorted by name
 
 	// Text inputs
@@ -394,7 +394,7 @@ func (m *submitViewModel) submitCmd() tea.Cmd {
 
 	var replicas int32 = 2
 	if m.typeIdx == 1 {
-		if v, err := strconv.Atoi(strings.TrimSpace(m.replicasInput.Value())); err == nil && v > 0 {
+		if v, err := strconv.ParseInt(strings.TrimSpace(m.replicasInput.Value()), 10, 32); err == nil && v > 0 {
 			replicas = int32(v)
 		}
 	}
@@ -442,13 +442,13 @@ var (
 				BorderForeground(colorMuted).
 				Padding(0, 2)
 
-	styleSubmitTitle   = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
-	styleFieldLabel    = lipgloss.NewStyle().Foreground(colorMuted).Width(12)
+	styleSubmitTitle    = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
+	styleFieldLabel     = lipgloss.NewStyle().Foreground(colorMuted).Width(12)
 	styleOptionActive   = lipgloss.NewStyle().Background(lipgloss.Color("27")).Foreground(colorBright).Bold(true)
 	styleOptionInactive = lipgloss.NewStyle().Foreground(colorMuted)
 	styleOptionFocused  = lipgloss.NewStyle().Foreground(colorNormal)
-	styleSubmitBtn     = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
-	styleSubmitError   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	styleSubmitBtn      = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
+	styleSubmitError    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
 
 func (m *submitViewModel) view(termWidth, termHeight int) string {
@@ -560,11 +560,12 @@ func (m *submitViewModel) renderOptions(field int, labels []string, selected int
 	focused := m.focusedField == field
 	var parts []string
 	for i, label := range labels {
-		if i == selected {
+		switch {
+		case i == selected:
 			parts = append(parts, styleOptionActive.Render(" "+label+" "))
-		} else if focused {
+		case focused:
 			parts = append(parts, styleOptionFocused.Render(" "+label+" "))
-		} else {
+		default:
 			parts = append(parts, styleOptionInactive.Render(" "+label+" "))
 		}
 	}
@@ -574,4 +575,3 @@ func (m *submitViewModel) renderOptions(field int, labels []string, selected int
 func (m *submitViewModel) renderTextInputField(label string, field int, input *textinput.Model) string {
 	return m.renderFieldLabel(label, field) + input.View() + "\n"
 }
-
