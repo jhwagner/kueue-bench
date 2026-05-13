@@ -49,9 +49,10 @@ func expandWorker(ws WorkerSet, worker Worker, flavorPools map[string]string) (C
 	}
 
 	return ClusterConfig{
-		Name:      worker.Name,
-		Role:      RoleWorker,
-		NodePools: worker.NodePools,
+		Name:       worker.Name,
+		Role:       RoleWorker,
+		NodePools:  worker.NodePools,
+		Extensions: ws.Extensions,
 		Kueue: &KueueConfig{
 			ResourceFlavors: resourceFlavors,
 			ClusterQueues:   clusterQueues,

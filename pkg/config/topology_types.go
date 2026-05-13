@@ -185,6 +185,7 @@ type WorkloadPriorityClass struct {
 // values (labels, quotas) are derived from each worker's node pools.
 type WorkerSet struct {
 	Name            string                  `yaml:"name"`
+	Extensions      []Extension             `yaml:"extensions,omitempty"`
 	ResourceFlavors []WorkerSetFlavor       `yaml:"resourceFlavors"`
 	ClusterQueues   []WorkerSetClusterQueue `yaml:"clusterQueues"`
 	LocalQueues     []LocalQueue            `yaml:"localQueues,omitempty"`
